@@ -11,13 +11,30 @@ $dateFrom = $month . '-01';
 $dateTo = date('Y-m-t', strtotime($dateFrom));
 $periodLabel = date('F Y', strtotime($dateFrom));
 
-// 1) Performa penjualan by customer — revenue invoice (qty x harga jual per baris) bulan berjalan.
+// Stat cards — snapshot stock terkini + aktivitas bulan berjalan.
+$stockCountStmt = $pdo->prepare('SELECT COUNT(*), COALESCE(SUM(weight),0) FROM inventory_items WHERE organization_id=? AND status="in_stock"');
+$stockCountStmt->execute([$orgId]);
+[$stockCount, $stockWeight] = $stockCountStmt->fetch(PDO::FETCH_NUM);
+
+$receivedStmt = $pdo->prepare('SELECT COUNT(*) FROM inventory_items WHERE organization_id=? AND source_type="goods_receipt" AND DATE(created_at) BETWEEN ? AND ?');
+$receivedStmt->execute([$orgId, $dateFrom, $dateTo]);
+$receivedCount = (int) $receivedStmt->fetchColumn();
+
+$soldStmt = $pdo->prepare(
+    'SELECT COUNT(*), COALESCE(SUM(sgl.unit_price),0) FROM sales_gold_lines sgl
+     JOIN sales_gold sg ON sg.id = sgl.sale_id
+     WHERE sg.organization_id=? AND DATE(sg.sold_at) BETWEEN ? AND ?'
+);
+$soldStmt->execute([$orgId, $dateFrom, $dateTo]);
+[$soldCount, $soldRevenue] = $soldStmt->fetch(PDO::FETCH_NUM);
+
+// Penjualan by customer bulan berjalan.
 $byCustomerStmt = $pdo->prepare(
-    'SELECT c.name AS label, SUM(il.qty * il.unit_price) AS value
-     FROM invoice_lines il
-     JOIN invoices i ON i.id = il.invoice_id
-     JOIN contacts c ON c.id = i.contact_id
-     WHERE i.organization_id = ? AND i.status != "void" AND DATE(i.created_at) BETWEEN ? AND ?
+    'SELECT c.name AS label, SUM(sgl.unit_price) AS value
+     FROM sales_gold_lines sgl
+     JOIN sales_gold sg ON sg.id = sgl.sale_id
+     JOIN contacts c ON c.id = sg.contact_id
+     WHERE sg.organization_id = ? AND DATE(sg.sold_at) BETWEEN ? AND ?
      GROUP BY c.id
      ORDER BY value DESC
      LIMIT 10'
@@ -25,61 +42,42 @@ $byCustomerStmt = $pdo->prepare(
 $byCustomerStmt->execute([$orgId, $dateFrom, $dateTo]);
 $byCustomer = $byCustomerStmt->fetchAll();
 
-// 2) Performa penjualan by project — revenue invoice ditelusuri balik lewat quotation_line -> quotation -> project.
-$byProjectStmt = $pdo->prepare(
-    'SELECT COALESCE(p.name, "Tanpa Project") AS label, SUM(il.qty * il.unit_price) AS value
-     FROM invoice_lines il
-     JOIN invoices i ON i.id = il.invoice_id
-     JOIN quotation_lines ql ON ql.id = il.quotation_line_id
-     JOIN quotations q ON q.id = ql.quotation_id
-     LEFT JOIN projects p ON p.id = q.project_id
-     WHERE i.organization_id = ? AND i.status != "void" AND DATE(i.created_at) BETWEEN ? AND ?
-     GROUP BY p.id
-     ORDER BY value DESC
-     LIMIT 10'
+// Stock in_stock terkini, dikelompokkan per Group Product.
+$catRows = $pdo->prepare('SELECT id, parent_id, name FROM product_categories WHERE organization_id=?');
+$catRows->execute([$orgId]);
+$catRows = $catRows->fetchAll();
+$catById = [];
+foreach ($catRows as $c) $catById[$c['id']] = $c;
+function dash_root_name(array $catById, ?int $id): string
+{
+    $node = $id ? ($catById[$id] ?? null) : null;
+    while ($node && $node['parent_id']) $node = $catById[$node['parent_id']] ?? null;
+    return $node ? $node['name'] : 'Tanpa Kategori';
+}
+$stockRows = $pdo->prepare(
+    "SELECT p.category_id, COUNT(*) AS cnt FROM inventory_items ii JOIN products p ON p.id = ii.product_id
+     WHERE ii.organization_id=? AND ii.status='in_stock' GROUP BY p.category_id"
 );
-$byProjectStmt->execute([$orgId, $dateFrom, $dateTo]);
-$byProject = $byProjectStmt->fetchAll();
+$stockRows->execute([$orgId]);
+$stockByGroup = [];
+foreach ($stockRows->fetchAll() as $r) {
+    $name = dash_root_name($catById, $r['category_id'] ? (int) $r['category_id'] : null);
+    $stockByGroup[$name] = ($stockByGroup[$name] ?? 0) + (int) $r['cnt'];
+}
+arsort($stockByGroup);
+$stockByGroupRows = array_map(fn($k, $v) => ['label' => $k, 'value' => $v], array_keys($stockByGroup), array_values($stockByGroup));
 
-// 3) SPK per vendor — jumlah SPK bulan berjalan, dikelompokkan per vendor.
-$spkByVendorStmt = $pdo->prepare(
-    'SELECT c.name AS label, COUNT(*) AS value
-     FROM spk s
-     JOIN contacts c ON c.id = s.vendor_id
-     WHERE s.organization_id = ? AND s.status != "void" AND DATE(s.created_at) BETWEEN ? AND ?
-     GROUP BY c.id
-     ORDER BY value DESC
-     LIMIT 10'
+// Stock in_stock terkini, dikelompokkan per Lokasi.
+$stockByLocStmt = $pdo->prepare(
+    "SELECT gloc.name AS group_name, loc.name AS loc_name, COUNT(*) AS cnt, COALESCE(SUM(ii.weight),0) AS total_weight
+     FROM inventory_items ii
+     LEFT JOIN locations loc ON loc.id = ii.location_id
+     LEFT JOIN locations gloc ON gloc.id = loc.parent_id
+     WHERE ii.organization_id=? AND ii.status='in_stock'
+     GROUP BY ii.location_id ORDER BY cnt DESC"
 );
-$spkByVendorStmt->execute([$orgId, $dateFrom, $dateTo]);
-$spkByVendor = $spkByVendorStmt->fetchAll();
-
-// 4) Produk paling laku — total qty terjual (invoice_lines) bulan berjalan.
-$topProductsStmt = $pdo->prepare(
-    'SELECT il.product_name_snapshot AS label, SUM(il.qty) AS value
-     FROM invoice_lines il
-     JOIN invoices i ON i.id = il.invoice_id
-     WHERE i.organization_id = ? AND i.status != "void" AND DATE(i.created_at) BETWEEN ? AND ?
-     GROUP BY il.product_name_snapshot
-     ORDER BY value DESC
-     LIMIT 10'
-);
-$topProductsStmt->execute([$orgId, $dateFrom, $dateTo]);
-$topProducts = $topProductsStmt->fetchAll();
-
-// 5) Laporan inventory per material — stok TERKINI (snapshot, bukan per periode).
-$stockByMaterialStmt = $pdo->prepare(
-    'SELECT m.name AS label, SUM(sl.qty_remaining) AS value
-     FROM stock_ledger sl
-     JOIN materials m ON m.id = sl.material_id
-     WHERE sl.organization_id = ? AND sl.direction = "in" AND sl.material_id IS NOT NULL
-     GROUP BY m.id
-     HAVING value > 0
-     ORDER BY value DESC
-     LIMIT 15'
-);
-$stockByMaterialStmt->execute([$orgId]);
-$stockByMaterial = $stockByMaterialStmt->fetchAll();
+$stockByLocStmt->execute([$orgId]);
+$stockByLoc = $stockByLocStmt->fetchAll();
 
 function chart_payload(array $rows): string
 {
@@ -101,35 +99,41 @@ function chart_payload(array $rows): string
   </div>
 </form>
 
+<div class="stat-grid">
+  <div class="stat-card"><div class="val"><?= number_format((int) $stockCount) ?></div><div class="lbl">Barang In-Stock (skrg)</div></div>
+  <div class="stat-card"><div class="val"><?= number_format((float) $stockWeight, 2, ',', '.') ?> gr</div><div class="lbl">Total Berat In-Stock</div></div>
+  <div class="stat-card"><div class="val"><?= number_format($receivedCount) ?></div><div class="lbl">Barang Masuk — <?= htmlspecialchars($periodLabel) ?></div></div>
+  <div class="stat-card"><div class="val">Rp <?= number_format((float) $soldRevenue, 0, ',', '.') ?></div><div class="lbl"><?= number_format((int) $soldCount) ?> Terjual — <?= htmlspecialchars($periodLabel) ?></div></div>
+</div>
+
 <div class="dash-grid">
   <div class="card dash-chart-card">
-    <h3>Performa Penjualan by Customer</h3>
+    <h3>Penjualan by Customer — <?= htmlspecialchars($periodLabel) ?></h3>
     <canvas id="chartByCustomer" height="220"></canvas>
-    <?php if (!$byCustomer): ?><p class="dash-empty">Belum ada invoice pada periode ini.</p><?php endif; ?>
+    <?php if (!$byCustomer): ?><p class="dash-empty">Belum ada penjualan pada periode ini.</p><?php endif; ?>
   </div>
 
   <div class="card dash-chart-card">
-    <h3>Performa Penjualan by Project</h3>
-    <canvas id="chartByProject" height="220"></canvas>
-    <?php if (!$byProject): ?><p class="dash-empty">Belum ada invoice pada periode ini.</p><?php endif; ?>
-  </div>
-
-  <div class="card dash-chart-card">
-    <h3>SPK per Vendor</h3>
-    <canvas id="chartSpkVendor" height="220"></canvas>
-    <?php if (!$spkByVendor): ?><p class="dash-empty">Belum ada SPK pada periode ini.</p><?php endif; ?>
-  </div>
-
-  <div class="card dash-chart-card">
-    <h3>Produk Paling Laku — <?= htmlspecialchars($periodLabel) ?></h3>
-    <canvas id="chartTopProducts" height="220"></canvas>
-    <?php if (!$topProducts): ?><p class="dash-empty">Belum ada penjualan produk pada periode ini.</p><?php endif; ?>
+    <h3>Stock In-Stock per Group Product <span class="dash-hint">(skrg)</span></h3>
+    <canvas id="chartStockGroup" height="220"></canvas>
+    <?php if (!$stockByGroupRows): ?><p class="dash-empty">Belum ada stock.</p><?php endif; ?>
   </div>
 
   <div class="card dash-chart-card dash-chart-wide">
-    <h3>Laporan Inventory per Material <span class="dash-hint">(stok terkini)</span></h3>
-    <canvas id="chartStockMaterial" height="180"></canvas>
-    <?php if (!$stockByMaterial): ?><p class="dash-empty">Belum ada stok material.</p><?php endif; ?>
+    <h3>Stock per Lokasi <span class="dash-hint">(skrg)</span></h3>
+    <table class="data-table">
+      <thead><tr><th>Lokasi</th><th class="num">Jumlah Barang</th><th class="num">Total Berat</th></tr></thead>
+      <tbody>
+        <?php foreach ($stockByLoc as $r): ?>
+          <tr>
+            <td><?= htmlspecialchars(($r['group_name'] ? $r['group_name'] . ' › ' : '') . ($r['loc_name'] ?? '-')) ?></td>
+            <td class="num"><?= (int) $r['cnt'] ?></td>
+            <td class="num"><?= number_format((float) $r['total_weight'], 2, ',', '.') ?> gr</td>
+          </tr>
+        <?php endforeach; ?>
+        <?php if (!$stockByLoc): ?><tr><td colspan="3" style="text-align:center; color:var(--ink-muted);">Belum ada stock.</td></tr><?php endif; ?>
+      </tbody>
+    </table>
   </div>
 </div>
 
@@ -169,10 +173,7 @@ function chart_payload(array $rows): string
   }
 
   barChart('chartByCustomer', <?= chart_payload($byCustomer) ?>, { horizontal: true });
-  barChart('chartByProject', <?= chart_payload($byProject) ?>, { horizontal: true });
-  barChart('chartSpkVendor', <?= chart_payload($spkByVendor) ?>);
-  barChart('chartTopProducts', <?= chart_payload($topProducts) ?>, { horizontal: true });
-  barChart('chartStockMaterial', <?= chart_payload($stockByMaterial) ?>);
+  barChart('chartStockGroup', <?= chart_payload($stockByGroupRows) ?>);
 })();
 </script>
 

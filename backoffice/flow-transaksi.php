@@ -21,10 +21,11 @@ function count_rows(PDO $pdo, string $sql, int $orgId): int
 }
 
 $stages = [
-    ['title' => 'Penawaran', 'href' => 'quotations.php', 'desc' => 'Quotation ke customer', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM quotations WHERE organization_id=?', $orgId), 'ready' => true],
-    ['title' => 'PO', 'href' => 'purchase-orders.php', 'desc' => 'Purchase order ke supplier', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM purchase_orders WHERE organization_id=?', $orgId), 'ready' => true],
+    ['title' => 'Penawaran', 'href' => 'quotation-gold.php', 'desc' => 'Quotation ke customer', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM quotations_gold WHERE organization_id=?', $orgId), 'ready' => true],
+    ['title' => 'PO', 'href' => 'purchase-order-gold.php', 'desc' => 'Purchase order ke supplier', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM purchase_orders_gold WHERE organization_id=?', $orgId), 'ready' => true],
     ['title' => 'Penerimaan Barang', 'href' => 'goods-receipt-gold.php', 'desc' => 'Barang masuk + kode sertifikat & PLU', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM gold_goods_receipts WHERE organization_id=?', $orgId), 'ready' => true],
     ['title' => 'Transfer / Terima Transfer', 'href' => 'stock-transfer.php', 'desc' => 'Pindah lokasi, 1 dokumen 2 status', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM stock_transfers WHERE organization_id=?', $orgId), 'ready' => true],
+    ['title' => 'Penjualan', 'href' => 'sale-gold.php', 'desc' => 'Jual barang, stock jadi sold', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM sales_gold WHERE organization_id=?', $orgId), 'ready' => true],
     ['title' => 'Laporan Stock', 'href' => 'stock-report.php', 'desc' => '8 filter: lokasi, group product, tipe stock, dll', 'count' => null, 'ready' => true],
     ['title' => 'Lebur Barang', 'href' => 'melting.php', 'desc' => 'Keluarin barang jadi, masuk stock raw gold', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM melting_batches WHERE organization_id=?', $orgId), 'ready' => true],
     ['title' => 'Retur Supplier', 'href' => 'supplier-return.php', 'desc' => 'Retur nempel ke Penerimaan asal', 'count' => count_rows($pdo, 'SELECT COUNT(*) FROM supplier_returns WHERE organization_id=?', $orgId), 'ready' => true],

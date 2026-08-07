@@ -20,6 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $locationId = (int) ($_POST['location_id'] ?? 0);
             $vendorId = (int) ($_POST['vendor_id'] ?? 0) ?: null;
+            $poId = (int) ($_POST['po_id'] ?? 0) ?: null;
             $projectId = (int) ($_POST['project_id'] ?? 0) ?: null;
             $notes = trim($_POST['notes'] ?? '') ?: null;
             $lineProductIds = $_POST['line_product_id'] ?? [];
@@ -45,11 +46,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $locCheck->execute([$locationId, $org['organization_id']]);
             if (!$locCheck->fetch()) throw new RuntimeException('Lokasi tidak valid.');
 
+            if ($poId) {
+                $poCheck = $pdo->prepare('SELECT id FROM purchase_orders_gold WHERE id=? AND organization_id=?');
+                $poCheck->execute([$poId, $org['organization_id']]);
+                if (!$poCheck->fetch()) throw new RuntimeException('PO tidak valid.');
+            }
+
             $pdo->beginTransaction();
             $docNumber = next_doc_number($org['organization_id'], 'GR-EMAS');
-            $pdo->prepare('INSERT INTO gold_goods_receipts (organization_id, doc_number, location_id, vendor_id, project_id, notes, received_by) VALUES (?,?,?,?,?,?,?)')
-                ->execute([$org['organization_id'], $docNumber, $locationId, $vendorId, $projectId, $notes, $user['id']]);
+            $pdo->prepare('INSERT INTO gold_goods_receipts (organization_id, doc_number, location_id, po_id, vendor_id, project_id, notes, received_by) VALUES (?,?,?,?,?,?,?,?)')
+                ->execute([$org['organization_id'], $docNumber, $locationId, $poId, $vendorId, $projectId, $notes, $user['id']]);
             $grId = (int) $pdo->lastInsertId();
+            if ($poId) {
+                $pdo->prepare("UPDATE purchase_orders_gold SET status='received' WHERE id=? AND organization_id=?")->execute([$poId, $org['organization_id']]);
+            }
 
             $prodCheck = $pdo->prepare('SELECT id FROM products WHERE id=? AND organization_id=?');
             $insItem = $pdo->prepare('INSERT INTO inventory_items (organization_id, product_id, location_id, stock_type_id, certificate_code, plu_code, weight, project_id, source_type, source_id) VALUES (?,?,?,?,?,?,?,?,\'goods_receipt\',?)');
@@ -75,6 +85,10 @@ $locations = $locations->fetchAll();
 $vendors = $pdo->prepare("SELECT id, name FROM contacts WHERE organization_id=? AND type IN ('vendor','both') ORDER BY name");
 $vendors->execute([$org['organization_id']]);
 $vendors = $vendors->fetchAll();
+
+$openPOs = $pdo->prepare("SELECT po.id, po.doc_number, v.name AS vendor_name FROM purchase_orders_gold po LEFT JOIN contacts v ON v.id = po.vendor_id WHERE po.organization_id=? AND po.status='sent' ORDER BY po.id DESC");
+$openPOs->execute([$org['organization_id']]);
+$openPOs = $openPOs->fetchAll();
 
 $projects = $pdo->prepare('SELECT id, name FROM projects WHERE organization_id=? ORDER BY name');
 $projects->execute([$org['organization_id']]);
@@ -126,6 +140,13 @@ $recent = $recent->fetchAll();
         <select name="vendor_id">
           <option value="">—</option>
           <?php foreach ($vendors as $v): ?><option value="<?= $v['id'] ?>"><?= htmlspecialchars($v['name']) ?></option><?php endforeach; ?>
+        </select>
+      </div>
+      <div class="field">
+        <label>PO Asal (opsional)</label>
+        <select name="po_id">
+          <option value="">— tanpa PO —</option>
+          <?php foreach ($openPOs as $po): ?><option value="<?= $po['id'] ?>"><?= htmlspecialchars($po['doc_number'] . ($po['vendor_name'] ? ' — ' . $po['vendor_name'] : '')) ?></option><?php endforeach; ?>
         </select>
       </div>
       <div class="field">
