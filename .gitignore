@@ -1,0 +1,6 @@
+# Kredensial asli — jangan pernah commit, treat kayak password.
+backoffice-shared/config.php
+backoffice-shared/config.local.php
+
+.DS_Store
+*.log
