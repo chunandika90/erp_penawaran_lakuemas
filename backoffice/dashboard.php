@@ -109,14 +109,20 @@ function chart_payload(array $rows): string
 <div class="dash-grid">
   <div class="card dash-chart-card">
     <h3>Penjualan by Customer — <?= htmlspecialchars($periodLabel) ?></h3>
-    <canvas id="chartByCustomer" height="220"></canvas>
-    <?php if (!$byCustomer): ?><p class="dash-empty">Belum ada penjualan pada periode ini.</p><?php endif; ?>
+    <?php if (!$byCustomer): ?>
+      <p class="dash-empty">Belum ada penjualan pada periode ini.</p>
+    <?php else: ?>
+      <div class="dash-chart-wrap"><canvas id="chartByCustomer"></canvas></div>
+    <?php endif; ?>
   </div>
 
   <div class="card dash-chart-card">
     <h3>Stock In-Stock per Group Product <span class="dash-hint">(skrg)</span></h3>
-    <canvas id="chartStockGroup" height="220"></canvas>
-    <?php if (!$stockByGroupRows): ?><p class="dash-empty">Belum ada stock.</p><?php endif; ?>
+    <?php if (!$stockByGroupRows): ?>
+      <p class="dash-empty">Belum ada stock.</p>
+    <?php else: ?>
+      <div class="dash-chart-wrap"><canvas id="chartStockGroup"></canvas></div>
+    <?php endif; ?>
   </div>
 
   <div class="card dash-chart-card dash-chart-wide">

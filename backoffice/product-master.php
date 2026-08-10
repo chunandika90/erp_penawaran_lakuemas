@@ -83,12 +83,25 @@ $products = $pdo->prepare('SELECT * FROM products WHERE organization_id=? AND ca
 $products->execute([$org['organization_id']]);
 $products = $products->fetchAll();
 
+// Kanban 3 tier: Group Product (kolom) -> Brand (sub-grup di dalem kolom) ->
+// Pecahan/produk (kartu). Brand = kategori anak langsung dari root. Produk
+// yang category_id-nya LANGSUNG ke root (gak ada level Brand di antaranya)
+// ditampung di sub-grup "Lainnya" di kolom itu.
 $roots = array_values(array_filter($catRows, fn($c) => !$c['parent_id']));
 $columns = [];
-foreach ($roots as $root) $columns[$root['id']] = ['root' => $root, 'items' => []];
+foreach ($roots as $root) {
+    $brands = array_values(array_filter($catRows, fn($c) => $c['parent_id'] == $root['id']));
+    $groups = [];
+    foreach ($brands as $brand) $groups[$brand['id']] = ['label' => $brand['name'], 'items' => []];
+    $groups['_other'] = ['label' => 'Lainnya', 'items' => []];
+    $columns[$root['id']] = ['root' => $root, 'groups' => $groups];
+}
 foreach ($products as $p) {
     $rootId = cat_root_id($catById, (int) $p['category_id']);
-    if (isset($columns[$rootId])) $columns[$rootId]['items'][] = $p;
+    if (!isset($columns[$rootId])) continue;
+    $catId = (int) $p['category_id'];
+    $groupKey = ($catId !== $rootId && isset($columns[$rootId]['groups'][$catId])) ? $catId : '_other';
+    $columns[$rootId]['groups'][$groupKey]['items'][] = $p;
 }
 ?>
 
@@ -102,6 +115,7 @@ foreach ($products as $p) {
   <div style="display:flex; gap:6px;">
     <button type="button" class="btn btn-sm" id="btn-view-kanban" onclick="setView('kanban')">Kanban</button>
     <button type="button" class="btn btn-sm btn-ghost" id="btn-view-table" onclick="setView('table')">Tabel</button>
+    <button type="button" class="pf-orient-toggle" id="pm-orient-toggle" style="margin-left:6px;">⇄ Vertikal</button>
   </div>
   <?php if (has_access('kontak', 'can_create')): ?>
     <button class="btn btn-sm" type="button" onclick="openProductModal(0)">+ Produk Baru</button>
@@ -109,16 +123,22 @@ foreach ($products as $p) {
 </div>
 
 <div id="view-kanban" class="flow-board-wrap">
-  <div class="flow-board" style="overflow-x:auto;">
-    <?php foreach ($columns as $col): $root = $col['root']; $items = $col['items']; ?>
-      <div class="flow-col" style="flex:0 0 250px; width:250px;">
-        <div class="flow-col-head"><span><?= htmlspecialchars($root['name']) ?></span><span class="flow-count"><?= count($items) ?></span></div>
-        <?php if (!$items): ?><div class="flow-empty">Belum ada produk.</div><?php endif; ?>
-        <?php foreach ($items as $p): ?>
-          <div class="flow-card" style="cursor:pointer; <?= $p['is_active'] ? '' : 'opacity:.55;' ?>" onclick="openProductModal(<?= $p['id'] ?>)">
-            <div class="flow-doc"><?= htmlspecialchars($p['name']) ?><?php if (!$p['is_active']): ?> <span class="pill">Nonaktif</span><?php endif; ?></div>
-            <div class="flow-sub"><?= htmlspecialchars(cat_breadcrumb($catById, (int) $p['category_id'])) ?></div>
-            <div class="flow-sub">Rp <?= number_format((float) $p['base_price'], 0, ',', '.') ?> / <?= htmlspecialchars($p['unit']) ?></div>
+  <div class="flow-board" id="pm-board" style="overflow-x:auto;">
+    <?php foreach ($columns as $col): $root = $col['root']; $groups = $col['groups'];
+      $totalCount = array_sum(array_map(fn($g) => count($g['items']), $groups));
+    ?>
+      <div class="flow-col" style="flex:0 0 270px; width:270px;">
+        <div class="flow-col-head"><span><?= htmlspecialchars($root['name']) ?></span><span class="flow-count"><?= $totalCount ?></span></div>
+        <?php if (!$totalCount): ?><div class="flow-empty">Belum ada produk.</div><?php endif; ?>
+        <?php foreach ($groups as $group): if (!$group['items']) continue; ?>
+          <div class="kanban-subgroup">
+            <div class="kanban-subgroup-head"><?= htmlspecialchars($group['label']) ?> <span class="flow-count"><?= count($group['items']) ?></span></div>
+            <?php foreach ($group['items'] as $p): ?>
+              <div class="flow-card" style="cursor:pointer; <?= $p['is_active'] ? '' : 'opacity:.55;' ?>" onclick="openProductModal(<?= $p['id'] ?>)">
+                <div class="flow-doc"><?= htmlspecialchars($p['name']) ?><?php if (!$p['is_active']): ?> <span class="pill">Nonaktif</span><?php endif; ?></div>
+                <div class="flow-sub">Rp <?= number_format((float) $p['base_price'], 0, ',', '.') ?> / <?= htmlspecialchars($p['unit']) ?></div>
+              </div>
+            <?php endforeach; ?>
           </div>
         <?php endforeach; ?>
       </div>
@@ -310,6 +330,23 @@ function setView(mode) {
   document.getElementById('btn-view-kanban').className = 'btn btn-sm' + (mode === 'kanban' ? '' : ' btn-ghost');
   document.getElementById('btn-view-table').className = 'btn btn-sm' + (mode === 'table' ? '' : ' btn-ghost');
 }
+
+(function () {
+  var board = document.getElementById('pm-board');
+  var toggle = document.getElementById('pm-orient-toggle');
+  if (!board || !toggle) return;
+  var vertical = localStorage.getItem('pm-board-vertical') === '1';
+  function apply() {
+    board.classList.toggle('vertical', vertical);
+    toggle.textContent = vertical ? '⇄ Horizontal' : '⇄ Vertikal';
+  }
+  apply();
+  toggle.addEventListener('click', function () {
+    vertical = !vertical;
+    localStorage.setItem('pm-board-vertical', vertical ? '1' : '0');
+    apply();
+  });
+})();
 </script>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>
