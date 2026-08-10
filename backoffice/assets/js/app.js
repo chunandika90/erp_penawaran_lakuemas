@@ -124,4 +124,26 @@
   };
 
   document.querySelectorAll('.rupiah-input').forEach(window.initRupiahInput);
+
+  // Toggle sidebar jadi drawer di mobile (<=860px) -- tombol hamburger di
+  // pojok kiri atas, scrim buat nutup pas klik di luar.
+  (function () {
+    var toggle = document.getElementById('mobile-nav-toggle');
+    var sidebar = document.getElementById('app-sidebar');
+    var scrim = document.getElementById('app-shell-scrim');
+    if (!toggle || !sidebar || !scrim) return;
+    function close() {
+      sidebar.classList.remove('open');
+      scrim.classList.remove('open');
+      toggle.classList.remove('open');
+    }
+    toggle.addEventListener('click', function () {
+      var willOpen = !sidebar.classList.contains('open');
+      sidebar.classList.toggle('open', willOpen);
+      scrim.classList.toggle('open', willOpen);
+      toggle.classList.toggle('open', willOpen);
+    });
+    scrim.addEventListener('click', close);
+    sidebar.querySelectorAll('a').forEach(function (a) { a.addEventListener('click', close); });
+  })();
 })();

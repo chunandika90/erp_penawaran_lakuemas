@@ -5,8 +5,15 @@
  */
 require_once __DIR__ . '/../../backoffice-shared/auth.php';
 require_once __DIR__ . '/../../backoffice-shared/modules.php';
+require_once __DIR__ . '/icons.php';
 $user = require_login();
 $org = require_org();
+$__active = $activeMenu ?? '';
+function nav_link(string $key, string $href, string $label, string $active): string
+{
+    $cls = $key === $active ? 'active' : '';
+    return '<a href="' . htmlspecialchars($href) . '" class="' . $cls . '">' . nav_icon($key) . '<span>' . htmlspecialchars($label) . '</span></a>';
+}
 ?>
 <!doctype html>
 <html lang="id">
@@ -26,41 +33,70 @@ $org = require_org();
 </head>
 <body>
 <div class="app-shell">
-  <aside class="app-sidebar">
-    <div class="brand">WUJUD ERP</div>
-    <div class="org-name"><?= htmlspecialchars($org['legal_name']) ?></div>
+  <button type="button" class="mobile-nav-toggle" id="mobile-nav-toggle" aria-label="Buka menu">
+    <span></span><span></span><span></span>
+  </button>
+  <aside class="app-sidebar" id="app-sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark">W</div>
+      <div>
+        <div class="brand">WUJUD ERP</div>
+        <div class="org-name"><?= htmlspecialchars($org['legal_name']) ?></div>
+      </div>
+    </div>
     <nav class="app-nav">
-      <a href="dashboard.php" class="<?= ($activeMenu ?? '') === 'dashboard' ? 'active' : '' ?>">Dashboard</a>
+      <div class="app-nav-group">
+        <?= nav_link('dashboard', 'dashboard.php', 'Dashboard', $__active) ?>
+      </div>
       <?php if (has_access('kontak')): ?>
-        <a href="contacts.php" class="<?= ($activeMenu ?? '') === 'kontak' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Kontak</a>
-        <a href="product-master.php" class="<?= ($activeMenu ?? '') === 'product_master' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Master Produk (Emas)</a>
-        <a href="product-categories.php" class="<?= ($activeMenu ?? '') === 'product_categories' ? 'active' : '' ?>">Kategori Produk</a>
-        <a href="locations.php" class="<?= ($activeMenu ?? '') === 'locations' ? 'active' : '' ?>">Lokasi</a>
-        <a href="stock-types.php" class="<?= ($activeMenu ?? '') === 'stock_types' ? 'active' : '' ?>">Tipe Stock</a>
-        <a href="flow-transaksi.php" class="<?= ($activeMenu ?? '') === 'flow_transaksi' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Flow Transaksi (Emas)</a>
-        <a href="quotation-gold.php" class="<?= ($activeMenu ?? '') === 'quotation_gold' ? 'active' : '' ?>">Penawaran</a>
-        <a href="purchase-order-gold.php" class="<?= ($activeMenu ?? '') === 'po_gold' ? 'active' : '' ?>">PO</a>
-        <a href="goods-receipt-gold.php" class="<?= ($activeMenu ?? '') === 'goods_receipt_gold' ? 'active' : '' ?>">Penerimaan Barang</a>
-        <a href="stock-transfer.php" class="<?= ($activeMenu ?? '') === 'stock_transfer' ? 'active' : '' ?>">Transfer Stock</a>
-        <a href="sale-gold.php" class="<?= ($activeMenu ?? '') === 'sale_gold' ? 'active' : '' ?>">Penjualan</a>
-        <a href="melting.php" class="<?= ($activeMenu ?? '') === 'melting' ? 'active' : '' ?>">Lebur Barang</a>
-        <a href="supplier-return.php" class="<?= ($activeMenu ?? '') === 'supplier_return' ? 'active' : '' ?>">Retur Supplier</a>
-        <a href="stock-report.php" class="<?= ($activeMenu ?? '') === 'stock_report' ? 'active' : '' ?>">Laporan Stock</a>
-        <a href="item-lookup.php" class="<?= ($activeMenu ?? '') === 'item_lookup' ? 'active' : '' ?>">Cek Barang (PLU)</a>
+        <div class="app-nav-group">
+          <div class="app-nav-label">Kontak &amp; Master Data</div>
+          <?= nav_link('kontak', 'contacts.php', 'Kontak', $__active) ?>
+          <?= nav_link('product_master', 'product-master.php', 'Master Produk', $__active) ?>
+          <?= nav_link('product_categories', 'product-categories.php', 'Kategori Produk', $__active) ?>
+          <?= nav_link('locations', 'locations.php', 'Lokasi', $__active) ?>
+          <?= nav_link('stock_types', 'stock-types.php', 'Tipe Stock', $__active) ?>
+        </div>
+        <div class="app-nav-group">
+          <div class="app-nav-label">Transaksi Emas</div>
+          <?= nav_link('flow_transaksi', 'flow-transaksi.php', 'Flow Transaksi', $__active) ?>
+          <?= nav_link('quotation_gold', 'quotation-gold.php', 'Penawaran', $__active) ?>
+          <?= nav_link('po_gold', 'purchase-order-gold.php', 'PO', $__active) ?>
+          <?= nav_link('goods_receipt_gold', 'goods-receipt-gold.php', 'Penerimaan Barang', $__active) ?>
+          <?= nav_link('stock_transfer', 'stock-transfer.php', 'Transfer Stock', $__active) ?>
+          <?= nav_link('sale_gold', 'sale-gold.php', 'Penjualan', $__active) ?>
+          <?= nav_link('melting', 'melting.php', 'Lebur Barang', $__active) ?>
+          <?= nav_link('supplier_return', 'supplier-return.php', 'Retur Supplier', $__active) ?>
+        </div>
+        <div class="app-nav-group">
+          <div class="app-nav-label">Laporan</div>
+          <?= nav_link('stock_report', 'stock-report.php', 'Laporan Stock', $__active) ?>
+          <?= nav_link('item_lookup', 'item-lookup.php', 'Cek Barang (PLU)', $__active) ?>
+        </div>
       <?php endif; ?>
       <?php if (has_access('penawaran')): ?>
-        <a href="projects.php" class="<?= ($activeMenu ?? '') === 'projects' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Project</a>
-        <a href="project-flow.php" class="<?= ($activeMenu ?? '') === 'project_flow' ? 'active' : '' ?>">Project Flow</a>
+        <div class="app-nav-group">
+          <div class="app-nav-label">Project</div>
+          <?= nav_link('projects', 'projects.php', 'Project', $__active) ?>
+          <?= nav_link('project_flow', 'project-flow.php', 'Project Flow', $__active) ?>
+        </div>
       <?php endif; ?>
-      <a href="users.php" class="<?= ($activeMenu ?? '') === 'users' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Admin User</a>
-      <a href="roles.php" class="<?= ($activeMenu ?? '') === 'roles' ? 'active' : '' ?>">Roles &amp; Akses</a>
+      <div class="app-nav-group">
+        <div class="app-nav-label">Admin</div>
+        <?= nav_link('users', 'users.php', 'Admin User', $__active) ?>
+        <?= nav_link('roles', 'roles.php', 'Roles &amp; Akses', $__active) ?>
+      </div>
     </nav>
   </aside>
+  <div class="app-shell-scrim" id="app-shell-scrim"></div>
   <div class="app-main">
     <div class="app-topbar">
       <h1><?= htmlspecialchars($pageTitle ?? '') ?></h1>
       <div class="user">
-        <div class="user-name"><?= htmlspecialchars($user['name']) ?> — <span class="pill <?= $org['role_name'] === 'Owner' ? 'owner' : '' ?>"><?= htmlspecialchars($org['role_name']) ?></span></div>
+        <div class="user-name">
+          <span class="user-avatar"><?= htmlspecialchars(mb_strtoupper(mb_substr($user['name'], 0, 1))) ?></span>
+          <span><?= htmlspecialchars($user['name']) ?> <span class="pill <?= $org['role_name'] === 'Owner' ? 'owner' : '' ?>"><?= htmlspecialchars($org['role_name']) ?></span></span>
+        </div>
         <div class="user-actions">
           <a href="select-org.php">Ganti Organisasi</a>
           <a href="logout.php" class="btn btn-sm btn-ghost">Logout</a>

@@ -40,29 +40,47 @@ $items = $items->fetchAll();
 <title>Cetak Barcode — <?= htmlspecialchars($gr['doc_number']) ?></title>
 <script src="assets/js/vendor/jsbarcode.min.js"></script>
 <style>
+  /*
+   * Ukuran fisik label thermal roll -- ubah 2 angka ini aja kalau roll
+   * label yang dipakai beda ukuran (mis. 50mm x 30mm), gak perlu ubah CSS lain.
+   * Default 40x30mm dipilih karena ukuran paling umum buat tag perhiasan
+   * (printer thermal Xprinter/POS dkk).
+   */
+  :root { --label-w: 40mm; --label-h: 30mm; }
   * { box-sizing: border-box; }
   body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f2f2f2; }
   .toolbar { max-width: 900px; margin: 0 auto 16px; display: flex; justify-content: space-between; align-items: center; }
   .toolbar button { padding: 8px 16px; font-size: 13px; cursor: pointer; }
-  .sheet { max-width: 900px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .label { background: #fff; border: 1px solid #999; border-radius: 4px; padding: 8px; text-align: center; }
-  .label .prod { font-size: 10.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .label .meta { font-size: 9px; color: #555; margin: 2px 0 4px; }
-  .label svg { width: 100%; height: 36px; }
-  .label .plu { font-size: 10px; letter-spacing: 1px; font-weight: 600; margin-top: 2px; }
+  .toolbar .size-note { font-size: 12px; color: #666; }
+  .sheet { max-width: 900px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-start; }
+  .label {
+    width: var(--label-w); height: var(--label-h);
+    background: #fff; border: 1px solid #999; border-radius: 2px;
+    padding: 1.5mm; text-align: center; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .label .prod { font-size: 8.5px; font-weight: 700; line-height: 1.2; max-height: 2.4em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .label .meta { font-size: 7px; color: #555; margin: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .label svg { width: 100%; height: 40%; max-height: 11mm; }
+  .label .plu { font-size: 8px; letter-spacing: .5px; font-weight: 600; margin-top: 1px; }
   .empty { text-align: center; color: #777; padding: 40px; }
   @media print {
+    @page { size: var(--label-w) var(--label-h); margin: 0; }
     body { background: #fff; padding: 0; }
     .toolbar { display: none; }
-    .sheet { gap: 4mm; }
-    .label { border: 1px dashed #aaa; break-inside: avoid; }
+    .sheet { display: block; }
+    .label { border: none; page-break-after: always; break-after: page; margin: 0; }
+    .label:last-child { page-break-after: auto; break-after: auto; }
   }
 </style>
 </head>
 <body>
 
 <div class="toolbar">
-  <div>Penerimaan <strong><?= htmlspecialchars($gr['doc_number']) ?></strong> — <?= htmlspecialchars($gr['location_name'] ?? '-') ?><?= $gr['vendor_name'] ? ' · ' . htmlspecialchars($gr['vendor_name']) : '' ?> (<?= count($items) ?> barang)</div>
+  <div>
+    Penerimaan <strong><?= htmlspecialchars($gr['doc_number']) ?></strong> — <?= htmlspecialchars($gr['location_name'] ?? '-') ?><?= $gr['vendor_name'] ? ' · ' . htmlspecialchars($gr['vendor_name']) : '' ?> (<?= count($items) ?> barang)
+    <div class="size-note">Ukuran label: 40×30mm (thermal roll) — 1 barang = 1 label, langsung print tanpa perlu atur ulang di dialog print.</div>
+  </div>
   <button type="button" onclick="window.print()">Cetak</button>
 </div>
 
