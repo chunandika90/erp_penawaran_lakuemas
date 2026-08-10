@@ -4,3 +4,6 @@ backoffice-shared/config.local.php
 
 .DS_Store
 *.log
+
+# Salinan starter buat project lain (Sekolah Harmoni) — bukan bagian repo ini.
+/erp_harmony/

@@ -20,11 +20,8 @@ function nav_link(string $key, string $href, string $label, string $active): str
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title><?= htmlspecialchars($pageTitle ?? 'Backoffice') ?> — Wujud ERP</title>
-<link rel="apple-touch-icon" sizes="180x180" href="assets/img/favicons/apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicons/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="assets/img/favicons/favicon-16x16.png">
-<link rel="shortcut icon" type="image/x-icon" href="assets/img/favicons/favicon.ico">
+<title><?= htmlspecialchars($pageTitle ?? 'Backoffice') ?> — Lakuemas ERP</title>
+<link rel="icon" type="image/svg+xml" href="assets/img/favicon-lakuemas.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -38,9 +35,9 @@ function nav_link(string $key, string $href, string $label, string $active): str
   </button>
   <aside class="app-sidebar" id="app-sidebar">
     <div class="sidebar-brand">
-      <div class="brand-mark">W</div>
+      <div class="brand-mark">L</div>
       <div>
-        <div class="brand">WUJUD ERP</div>
+        <div class="brand">LAKUEMAS ERP</div>
         <div class="org-name"><?= htmlspecialchars($org['legal_name']) ?></div>
       </div>
     </div>
