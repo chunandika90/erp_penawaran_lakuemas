@@ -145,6 +145,20 @@ $statusLabel = [
       <div><span class="lbl">Project</span><?= htmlspecialchars($item['project_name'] ?? '—') ?></div>
       <div><span class="lbl">Masuk Sistem</span><?= htmlspecialchars(date('d M Y H:i', strtotime($item['created_at']))) ?></div>
     </div>
+    <?php if ($item['unit_cost'] !== null || $item['market_price_snapshot'] !== null): ?>
+      <?php
+        $cost = (float) ($item['unit_cost'] ?? 0);
+        $market = (float) ($item['market_price_snapshot'] ?? 0);
+        $margin = $market - $cost;
+      ?>
+      <div class="txn-info-strip" style="margin-top:8px;">
+        <div><span class="lbl">HPP (harga beli PO)</span><?= $item['unit_cost'] !== null ? 'Rp ' . number_format($cost, 0, ',', '.') : '—' ?></div>
+        <div><span class="lbl">Harga Jual Master (saat diterima)</span><?= $item['market_price_snapshot'] !== null ? 'Rp ' . number_format($market, 0, ',', '.') : '—' ?></div>
+        <?php if ($item['unit_cost'] !== null && $item['market_price_snapshot'] !== null): ?>
+          <div><span class="lbl">Estimasi Margin</span><span style="color:<?= $margin >= 0 ? 'var(--green)' : 'var(--danger)' ?>; font-weight:600;">Rp <?= number_format($margin, 0, ',', '.') ?></span></div>
+        <?php endif; ?>
+      </div>
+    <?php endif; ?>
   </div>
 
   <div class="card">

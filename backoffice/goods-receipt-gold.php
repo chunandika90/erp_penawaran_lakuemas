@@ -19,6 +19,31 @@ require_module_access('kontak');
 $pdo = db();
 $flash = null;
 
+/**
+ * Status PO dihitung ulang dari perbandingan qty tiap baris vs jumlah
+ * inventory_items yang po_line_id-nya nunjuk ke baris itu (COUNT on-the-fly,
+ * bukan kolom received_qty terpisah) -- 'partial' kalau ada yang masuk tapi
+ * belum semua baris penuh, 'received' kalau semua baris udah penuh.
+ */
+function recompute_po_status(PDO $pdo, int $poId, int $orgId): void
+{
+    $stmt = $pdo->prepare(
+        'SELECT pgl.qty, (SELECT COUNT(*) FROM inventory_items ii WHERE ii.po_line_id = pgl.id) AS received
+         FROM purchase_order_gold_lines pgl WHERE pgl.po_id = ?'
+    );
+    $stmt->execute([$poId]);
+    $lines = $stmt->fetchAll();
+    $totalQty = 0.0;
+    $totalReceived = 0;
+    foreach ($lines as $l) {
+        $totalQty += (float) $l['qty'];
+        $totalReceived += (int) $l['received'];
+    }
+    $status = $totalReceived <= 0 ? 'sent' : ($totalReceived >= $totalQty ? 'received' : 'partial');
+    $pdo->prepare("UPDATE purchase_orders_gold SET status=? WHERE id=? AND organization_id=? AND status NOT IN ('draft','void')")
+        ->execute([$status, $poId, $orgId]);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     if (($_POST['action'] ?? '') === 'save_receipt') {
@@ -66,29 +91,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$org['organization_id'], $docNumber, $locationId, $poId, $vendorId, $projectId, $notes, $user['id']]);
             $grId = (int) $pdo->lastInsertId();
 
-            $prodCheck = $pdo->prepare('SELECT id FROM products WHERE id=? AND organization_id=?');
+            $prodCheck = $pdo->prepare('SELECT id, base_price FROM products WHERE id=? AND organization_id=?');
             $poLineCheck = $pdo->prepare(
-                'SELECT pgl.id, pgl.po_id FROM purchase_order_gold_lines pgl
+                'SELECT pgl.id, pgl.po_id, pgl.unit_cost FROM purchase_order_gold_lines pgl
                  JOIN purchase_orders_gold po ON po.id = pgl.po_id
                  WHERE pgl.id=? AND po.organization_id=?'
             );
-            $insItem = $pdo->prepare('INSERT INTO inventory_items (organization_id, product_id, po_line_id, location_id, stock_type_id, certificate_code, plu_code, weight, project_id, source_type, source_id) VALUES (?,?,?,?,?,?,?,?,?,\'goods_receipt\',?)');
+            $insItem = $pdo->prepare('INSERT INTO inventory_items (organization_id, product_id, po_line_id, location_id, stock_type_id, certificate_code, plu_code, weight, unit_cost, market_price_snapshot, project_id, source_type, source_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,\'goods_receipt\',?)');
             $touchedPoIds = [];
             foreach ($rows as $r) {
                 $prodCheck->execute([$r['product_id'], $org['organization_id']]);
-                if (!$prodCheck->fetch()) throw new RuntimeException('Ada produk yang tidak valid di baris penerimaan.');
+                $product = $prodCheck->fetch();
+                if (!$product) throw new RuntimeException('Ada produk yang tidak valid di baris penerimaan.');
+                $unitCost = null;
                 if ($r['po_line_id']) {
                     $poLineCheck->execute([$r['po_line_id'], $org['organization_id']]);
                     $poLine = $poLineCheck->fetch();
                     if (!$poLine) throw new RuntimeException('Ada PO Line yang tidak valid di baris penerimaan.');
                     $touchedPoIds[(int) $poLine['po_id']] = true;
+                    $unitCost = (float) $poLine['unit_cost'];
                 }
                 $pluCode = next_plu_code($org['organization_id']);
-                $insItem->execute([$org['organization_id'], $r['product_id'], $r['po_line_id'], $locationId, $r['stock_type_id'], $r['certificate_code'], $pluCode, $r['weight'], $projectId, $grId]);
+                $insItem->execute([$org['organization_id'], $r['product_id'], $r['po_line_id'], $locationId, $r['stock_type_id'], $r['certificate_code'], $pluCode, $r['weight'], $unitCost, (float) $product['base_price'], $projectId, $grId]);
             }
             if ($poId) $touchedPoIds[$poId] = true;
             foreach (array_keys($touchedPoIds) as $tPoId) {
-                $pdo->prepare("UPDATE purchase_orders_gold SET status='received' WHERE id=? AND organization_id=?")->execute([$tPoId, $org['organization_id']]);
+                recompute_po_status($pdo, $tPoId, $org['organization_id']);
             }
             $pdo->commit();
             $flash = ['ok', "Penerimaan $docNumber tersimpan, " . count($rows) . ' barang masuk stock.'];
@@ -107,20 +135,25 @@ $vendors = $pdo->prepare("SELECT id, name FROM contacts WHERE organization_id=? 
 $vendors->execute([$org['organization_id']]);
 $vendors = $vendors->fetchAll();
 
-$openPOs = $pdo->prepare("SELECT po.id, po.doc_number, v.name AS vendor_name FROM purchase_orders_gold po LEFT JOIN contacts v ON v.id = po.vendor_id WHERE po.organization_id=? AND po.status='sent' ORDER BY po.id DESC");
+$openPOs = $pdo->prepare("SELECT po.id, po.doc_number, v.name AS vendor_name FROM purchase_orders_gold po LEFT JOIN contacts v ON v.id = po.vendor_id WHERE po.organization_id=? AND po.status IN ('sent','partial') ORDER BY po.id DESC");
 $openPOs->execute([$org['organization_id']]);
 $openPOs = $openPOs->fetchAll();
 
-// Baris PO terbuka (dari PO manapun yang status 'sent') — dipilih per baris
-// barang, bukan per header, biar 1 Penerimaan bisa gabung dari beberapa PO
-// sekaligus. Belum ada tracking received_qty per baris, jadi semua baris PO
-// yang PO-nya masih 'sent' muncul di sini (simplifikasi yang disengaja).
+// Baris PO terbuka (dari PO manapun status 'sent'/'partial') — dipilih per
+// baris barang, bukan per header, biar 1 Penerimaan bisa gabung dari
+// beberapa PO sekaligus. Cuma baris yang MASIH ADA SISA (qty > jumlah
+// inventory_items yang udah po_line_id-nya ke situ) yang dimunculin, biar
+// baris yang udah lengkap gak ke-double-pick.
 $openPoLines = $pdo->prepare(
-    "SELECT pgl.id, pgl.product_id, pgl.qty, po.doc_number, v.name AS vendor_name
+    "SELECT pgl.id, pgl.product_id, pgl.qty,
+       (SELECT COUNT(*) FROM inventory_items ii WHERE ii.po_line_id = pgl.id) AS received_qty,
+       po.doc_number, v.name AS vendor_name
      FROM purchase_order_gold_lines pgl
      JOIN purchase_orders_gold po ON po.id = pgl.po_id
      LEFT JOIN contacts v ON v.id = po.vendor_id
-     WHERE po.organization_id=? AND po.status='sent' ORDER BY po.id DESC"
+     WHERE po.organization_id=? AND po.status IN ('sent','partial')
+     HAVING received_qty < pgl.qty
+     ORDER BY po.id DESC"
 );
 $openPoLines->execute([$org['organization_id']]);
 $openPoLines = $openPoLines->fetchAll();
@@ -232,7 +265,7 @@ $recent = $recent->fetchAll();
 <script>
 var GR_PRODUCTS = <?= json_encode(array_map(fn($p) => ['id' => (int) $p['id'], 'label' => $p['name'] . ($p['category_name'] ? ' (' . $p['category_name'] . ')' : '')], $products)) ?>;
 var GR_STOCK_TYPES = <?= json_encode(array_map(fn($t) => ['id' => (int) $t['id'], 'name' => $t['name']], $stockTypes)) ?>;
-var GR_PO_LINES = <?= json_encode(array_map(fn($l) => ['id' => (int) $l['id'], 'product_id' => (int) $l['product_id'], 'label' => $l['doc_number'] . ' — ' . $l['qty'] . 'x (' . ($l['vendor_name'] ?: '-') . ')'], $openPoLines)) ?>;
+var GR_PO_LINES = <?= json_encode(array_map(fn($l) => ['id' => (int) $l['id'], 'product_id' => (int) $l['product_id'], 'label' => $l['doc_number'] . ' — sisa ' . ($l['qty'] - $l['received_qty']) . '/' . $l['qty'] . ' (' . ($l['vendor_name'] ?: '-') . ')'], $openPoLines)) ?>;
 var grLineIndex = 0;
 function addGrLine() {
   var i = grLineIndex++;

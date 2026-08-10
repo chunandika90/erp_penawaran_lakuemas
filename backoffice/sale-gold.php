@@ -19,7 +19,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     try {
         $contactId = (int) ($_POST['contact_id'] ?? 0);
         $projectId = (int) ($_POST['project_id'] ?? 0) ?: null;
-        $quotationId = (int) ($_POST['quotation_id'] ?? 0) ?: null;
         $notes = trim($_POST['notes'] ?? '') ?: null;
         $itemIds = $_POST['item_ids'] ?? [];
         $itemPrices = $_POST['item_price'] ?? [];
@@ -41,17 +40,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         }
 
         $docNumber = next_doc_number($org['organization_id'], 'JUAL-EMAS');
-        $pdo->prepare('INSERT INTO sales_gold (organization_id, doc_number, contact_id, project_id, quotation_id, notes, sold_by) VALUES (?,?,?,?,?,?,?)')
-            ->execute([$org['organization_id'], $docNumber, $contactId, $projectId, $quotationId, $notes, $user['id']]);
+        $pdo->prepare('INSERT INTO sales_gold (organization_id, doc_number, contact_id, project_id, notes, sold_by) VALUES (?,?,?,?,?,?)')
+            ->execute([$org['organization_id'], $docNumber, $contactId, $projectId, $notes, $user['id']]);
         $saleId = (int) $pdo->lastInsertId();
         $insLine = $pdo->prepare('INSERT INTO sales_gold_lines (sale_id, inventory_item_id, unit_price) VALUES (?,?,?)');
         $markSold = $pdo->prepare("UPDATE inventory_items SET status='sold' WHERE id=?");
         foreach ($lines as $l) {
             $insLine->execute([$saleId, $l['inventory_item_id'], $l['unit_price']]);
             $markSold->execute([$l['inventory_item_id']]);
-        }
-        if ($quotationId) {
-            $pdo->prepare("UPDATE quotations_gold SET status='approved' WHERE id=? AND organization_id=? AND status != 'approved'")->execute([$quotationId, $org['organization_id']]);
         }
         $pdo->commit();
         $total = array_sum(array_column($lines, 'unit_price'));
@@ -69,14 +65,6 @@ $customers = $customers->fetchAll();
 $projects = $pdo->prepare('SELECT id, name FROM projects WHERE organization_id=? ORDER BY name');
 $projects->execute([$org['organization_id']]);
 $projects = $projects->fetchAll();
-
-$approvedQuotations = $pdo->prepare(
-    "SELECT qg.id, qg.doc_number, c.name AS customer_name FROM quotations_gold qg
-     LEFT JOIN contacts c ON c.id = qg.contact_id
-     WHERE qg.organization_id=? AND qg.status='approved' ORDER BY qg.id DESC"
-);
-$approvedQuotations->execute([$org['organization_id']]);
-$approvedQuotations = $approvedQuotations->fetchAll();
 
 $availableItems = $pdo->prepare(
     "SELECT ii.id, ii.plu_code, ii.certificate_code, ii.weight, ii.product_id, p.name AS product_name, p.base_price
@@ -117,13 +105,6 @@ $sales = $sales->fetchAll();
         <select name="contact_id" required>
           <option value="">— pilih —</option>
           <?php foreach ($customers as $c): ?><option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['name']) ?></option><?php endforeach; ?>
-        </select>
-      </div>
-      <div class="field">
-        <label>Dari Penawaran (opsional)</label>
-        <select name="quotation_id">
-          <option value="">— tanpa penawaran —</option>
-          <?php foreach ($approvedQuotations as $q): ?><option value="<?= $q['id'] ?>"><?= htmlspecialchars($q['doc_number'] . ($q['customer_name'] ? ' — ' . $q['customer_name'] : '')) ?></option><?php endforeach; ?>
         </select>
       </div>
       <div class="field">

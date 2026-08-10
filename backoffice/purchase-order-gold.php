@@ -89,12 +89,18 @@ $products = $products->fetchAll();
 
 // Baris Penawaran yang udah "approved" — sumber opsional buat baris PO
 // (1 baris Penawaran boleh dirujuk banyak baris PO/lintas PO = split).
+// Cuma baris yang masih ada sisa (qty > total qty yang udah kepakai di
+// baris PO lain) yang dimunculin, biar kelihatan berapa yang belum di-PO-in.
 $openQuotationLines = $pdo->prepare(
-    "SELECT qgl.id, qgl.product_id, qgl.qty, qg.doc_number, qg.project_id, c.name AS contact_name
+    "SELECT qgl.id, qgl.product_id, qgl.qty,
+       (SELECT COALESCE(SUM(pgl.qty),0) FROM purchase_order_gold_lines pgl WHERE pgl.quotation_line_id = qgl.id) AS used_qty,
+       qg.doc_number, qg.project_id, c.name AS contact_name
      FROM quotation_gold_lines qgl
      JOIN quotations_gold qg ON qg.id = qgl.quotation_id
      JOIN contacts c ON c.id = qg.contact_id
-     WHERE qg.organization_id=? AND qg.status='approved' ORDER BY qg.id DESC"
+     WHERE qg.organization_id=? AND qg.status='approved'
+     HAVING used_qty < qgl.qty
+     ORDER BY qg.id DESC"
 );
 $openQuotationLines->execute([$org['organization_id']]);
 $openQuotationLines = $openQuotationLines->fetchAll();
@@ -103,7 +109,15 @@ $pos = $pdo->prepare(
     "SELECT po.*, v.name AS vendor_name,
        (SELECT COUNT(*) FROM purchase_order_gold_lines l WHERE l.po_id = po.id) AS line_count,
        (SELECT COALESCE(SUM(qty * unit_cost),0) FROM purchase_order_gold_lines l WHERE l.po_id = po.id) AS total,
-       (SELECT COUNT(*) FROM gold_goods_receipts gr WHERE gr.po_id = po.id) AS receipt_count
+       (SELECT COALESCE(SUM(qty),0) FROM purchase_order_gold_lines l WHERE l.po_id = po.id) AS qty_ordered,
+       (SELECT COUNT(*) FROM inventory_items ii JOIN purchase_order_gold_lines l ON l.id = ii.po_line_id WHERE l.po_id = po.id) AS qty_received,
+       (SELECT COUNT(*) FROM (
+          SELECT gr.id FROM gold_goods_receipts gr WHERE gr.po_id = po.id
+          UNION
+          SELECT ii.source_id FROM inventory_items ii JOIN purchase_order_gold_lines l ON l.id = ii.po_line_id WHERE l.po_id = po.id AND ii.source_type='goods_receipt'
+        ) recv) AS receipt_count,
+       (SELECT COUNT(*) FROM supplier_return_lines srl JOIN inventory_items ii ON ii.id = srl.inventory_item_id
+          JOIN purchase_order_gold_lines l ON l.id = ii.po_line_id WHERE l.po_id = po.id) AS retur_count
      FROM purchase_orders_gold po
      LEFT JOIN contacts v ON v.id = po.vendor_id
      WHERE po.organization_id=? ORDER BY po.id DESC LIMIT 30"
@@ -150,6 +164,10 @@ $pos = $pos->fetchAll();
     </table>
     <button type="button" class="btn btn-sm btn-ghost" onclick="addPoLine()">+ Tambah Produk</button>
 
+    <div class="txn-totals">
+      <div class="row grand"><span>Total</span><span id="po-grand-total">Rp 0</span></div>
+    </div>
+
     <div class="modal-foot" style="border-top:1px solid var(--border); margin-top:18px; padding-top:14px; justify-content:flex-end;">
       <button type="submit" class="btn">Simpan PO</button>
     </div>
@@ -159,16 +177,28 @@ $pos = $pos->fetchAll();
 <div class="card">
   <h3 style="margin-top:0;">PO Terakhir</h3>
   <table class="data-table">
-    <thead><tr><th>No. Dokumen</th><th>Vendor</th><th class="num">Item</th><th class="num">Total</th><th>Status</th><th>Penerimaan</th><th></th></tr></thead>
+    <thead><tr><th>No. Dokumen</th><th>Vendor</th><th class="num">Item</th><th class="num">Total</th><th>Status</th><th style="width:150px;">Pemenuhan</th><th>Penerimaan</th><th class="num">Retur</th><th></th></tr></thead>
     <tbody>
-      <?php foreach ($pos as $p): ?>
+      <?php foreach ($pos as $p):
+        $qtyOrdered = (float) $p['qty_ordered'];
+        $qtyReceived = (int) $p['qty_received'];
+        $pct = $qtyOrdered > 0 ? min(100, round($qtyReceived / $qtyOrdered * 100)) : 0;
+        $pillClass = ['draft' => 'pill-draft', 'sent' => 'pill-sent', 'partial' => 'pill-partial', 'received' => 'pill-received', 'void' => 'pill-void'][$p['status']] ?? 'pill-draft';
+      ?>
         <tr>
           <td><?= htmlspecialchars($p['doc_number']) ?></td>
           <td><?= htmlspecialchars($p['vendor_name'] ?? '-') ?></td>
           <td class="num"><?= (int) $p['line_count'] ?></td>
           <td class="num">Rp <?= number_format((float) $p['total'], 0, ',', '.') ?></td>
-          <td><span class="pill <?= $p['status'] === 'received' ? 'pill-received' : ($p['status'] === 'void' ? 'pill-void' : ($p['status'] === 'sent' ? 'pill-sent' : 'pill-draft')) ?>"><?= htmlspecialchars(ucfirst($p['status'])) ?></span></td>
+          <td><span class="pill <?= $pillClass ?>"><?= htmlspecialchars(ucfirst($p['status'])) ?></span></td>
+          <td>
+            <div class="fulfill-wrap">
+              <div class="fulfill-bar"><div class="fulfill-bar-fill<?= $pct >= 100 ? ' full' : '' ?>" style="width:<?= $pct ?>%;"></div></div>
+              <span class="fulfill-label"><?= $qtyReceived ?>/<?= (int) $qtyOrdered ?></span>
+            </div>
+          </td>
           <td><?= (int) $p['receipt_count'] > 0 ? (int) $p['receipt_count'] . ' dokumen' : '-' ?></td>
+          <td class="num"><?= (int) $p['retur_count'] > 0 ? (int) $p['retur_count'] . ' barang' : '-' ?></td>
           <td>
             <?php if ($p['status'] === 'draft' && has_access('kontak', 'can_edit')): ?>
               <button class="btn btn-sm" type="button" onclick="__submitDeleteForm('set_status', {po_id: <?= $p['id'] ?>, status: 'sent'})">Kirim</button>
@@ -177,7 +207,7 @@ $pos = $pos->fetchAll();
           </td>
         </tr>
       <?php endforeach; ?>
-      <?php if (!$pos): ?><tr><td colspan="7" style="text-align:center; color:var(--ink-muted);">Belum ada PO.</td></tr><?php endif; ?>
+      <?php if (!$pos): ?><tr><td colspan="9" style="text-align:center; color:var(--ink-muted);">Belum ada PO.</td></tr><?php endif; ?>
     </tbody>
   </table>
 </div>
@@ -186,7 +216,7 @@ $pos = $pos->fetchAll();
 
 <script>
 var PO_PRODUCTS = <?= json_encode(array_map(fn($p) => ['id' => (int) $p['id'], 'label' => $p['name'] . ($p['category_name'] ? ' (' . $p['category_name'] . ')' : '')], $products)) ?>;
-var PO_QUOTATION_LINES = <?= json_encode(array_map(fn($l) => ['id' => (int) $l['id'], 'product_id' => (int) $l['product_id'], 'label' => $l['doc_number'] . ' — ' . $l['contact_name'] . ' (' . $l['qty'] . 'x)'], $openQuotationLines)) ?>;
+var PO_QUOTATION_LINES = <?= json_encode(array_map(fn($l) => ['id' => (int) $l['id'], 'product_id' => (int) $l['product_id'], 'label' => $l['doc_number'] . ' — ' . $l['contact_name'] . ' — sisa ' . ($l['qty'] - $l['used_qty']) . '/' . $l['qty']], $openQuotationLines)) ?>;
 function addPoLine() {
   var tr = document.createElement('tr');
   var qlOpts = '<option value="">— tanpa Penawaran —</option>' + PO_QUOTATION_LINES.map(function (l) { return '<option value="' + l.id + '" data-product-id="' + l.product_id + '">' + l.label.replace(/</g, '&lt;') + '</option>'; }).join('');
@@ -194,15 +224,25 @@ function addPoLine() {
   tr.innerHTML =
     '<td><select name="line_quotation_line_id[]" onchange="poQuotationLineChanged(this)">' + qlOpts + '</select></td>' +
     '<td><select name="line_product_id[]" required>' + opts + '</select></td>' +
-    '<td><input type="text" name="line_qty[]" value="1" inputmode="decimal"></td>' +
-    '<td><input type="text" name="line_unit_cost[]" inputmode="decimal" value="0"></td>' +
-    '<td><button type="button" class="btn btn-sm btn-ghost" onclick="this.closest(\'tr\').remove()">Hapus</button></td>';
+    '<td><input type="text" name="line_qty[]" value="1" inputmode="decimal" oninput="recalcPoTotal()"></td>' +
+    '<td><input type="text" name="line_unit_cost[]" inputmode="decimal" value="0" oninput="recalcPoTotal()"></td>' +
+    '<td><button type="button" class="btn btn-sm btn-ghost" onclick="this.closest(\'tr\').remove(); recalcPoTotal();">Hapus</button></td>';
   document.getElementById('po-lines-body').appendChild(tr);
+  recalcPoTotal();
 }
 function poQuotationLineChanged(sel) {
   var productId = sel.selectedOptions[0] ? sel.selectedOptions[0].getAttribute('data-product-id') : '';
   var prodSelect = sel.closest('tr').querySelector('select[name="line_product_id[]"]');
   if (productId) prodSelect.value = productId;
+}
+function recalcPoTotal() {
+  var total = 0;
+  document.querySelectorAll('#po-lines-body tr').forEach(function (tr) {
+    var qty = parseFloat(tr.querySelector('input[name="line_qty[]"]').value) || 0;
+    var cost = parseFloat(tr.querySelector('input[name="line_unit_cost[]"]').value) || 0;
+    total += qty * cost;
+  });
+  document.getElementById('po-grand-total').textContent = 'Rp ' + total.toLocaleString('id-ID');
 }
 addPoLine();
 </script>

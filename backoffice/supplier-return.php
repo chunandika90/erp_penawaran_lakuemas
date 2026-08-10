@@ -83,7 +83,13 @@ if ($receipts) {
 
 $returns = $pdo->prepare(
     "SELECT sr.*, gr.doc_number AS gr_doc_number, v.name AS vendor_name,
-       (SELECT COUNT(*) FROM supplier_return_lines l WHERE l.supplier_return_id = sr.id) AS item_count
+       (SELECT COUNT(*) FROM supplier_return_lines l WHERE l.supplier_return_id = sr.id) AS item_count,
+       (SELECT GROUP_CONCAT(DISTINCT po.doc_number SEPARATOR ', ')
+          FROM supplier_return_lines srl
+          JOIN inventory_items ii ON ii.id = srl.inventory_item_id
+          JOIN purchase_order_gold_lines pgl ON pgl.id = ii.po_line_id
+          JOIN purchase_orders_gold po ON po.id = pgl.po_id
+          WHERE srl.supplier_return_id = sr.id) AS po_docs
      FROM supplier_returns sr
      LEFT JOIN gold_goods_receipts gr ON gr.id = sr.goods_receipt_id
      LEFT JOIN contacts v ON v.id = sr.vendor_id
@@ -129,18 +135,19 @@ $returns = $returns->fetchAll();
 <div class="card">
   <h3 style="margin-top:0;">Riwayat Retur</h3>
   <table class="data-table">
-    <thead><tr><th>No. Dokumen</th><th>Penerimaan Asal</th><th>Vendor</th><th class="num">Jumlah Barang</th><th>Tanggal</th></tr></thead>
+    <thead><tr><th>No. Dokumen</th><th>Penerimaan Asal</th><th>PO Asal</th><th>Vendor</th><th class="num">Jumlah Barang</th><th>Tanggal</th></tr></thead>
     <tbody>
       <?php foreach ($returns as $r): ?>
         <tr>
           <td><?= htmlspecialchars($r['doc_number']) ?></td>
           <td><?= htmlspecialchars($r['gr_doc_number'] ?? '-') ?></td>
+          <td><?= htmlspecialchars($r['po_docs'] ?? '—') ?></td>
           <td><?= htmlspecialchars($r['vendor_name'] ?? '-') ?></td>
           <td class="num"><?= (int) $r['item_count'] ?></td>
           <td><?= htmlspecialchars(date('d M Y H:i', strtotime($r['returned_at']))) ?></td>
         </tr>
       <?php endforeach; ?>
-      <?php if (!$returns): ?><tr><td colspan="5" style="text-align:center; color:var(--ink-muted);">Belum ada retur.</td></tr><?php endif; ?>
+      <?php if (!$returns): ?><tr><td colspan="6" style="text-align:center; color:var(--ink-muted);">Belum ada retur.</td></tr><?php endif; ?>
     </tbody>
   </table>
 </div>

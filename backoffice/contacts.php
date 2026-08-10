@@ -18,18 +18,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $type = $_POST['type'] ?? 'customer';
             if ($name === '') throw new RuntimeException('Nama kontak wajib diisi.');
             if (!in_array($type, ['customer', 'vendor', 'both'], true)) $type = 'customer';
+            $entityType = $_POST['entity_type'] ?? 'individual';
+            if (!in_array($entityType, ['individual', 'company'], true)) $entityType = 'individual';
             $phone = trim($_POST['phone'] ?? '') ?: null;
             $email = trim($_POST['email'] ?? '') ?: null;
             $address = trim($_POST['address'] ?? '') ?: null;
             $npwp = trim($_POST['npwp'] ?? '') ?: null;
 
             if ($id > 0) {
-                $pdo->prepare('UPDATE contacts SET name=?, type=?, phone=?, email=?, address=?, npwp=? WHERE id=? AND organization_id=?')
-                    ->execute([$name, $type, $phone, $email, $address, $npwp, $id, $org['organization_id']]);
+                $pdo->prepare('UPDATE contacts SET name=?, type=?, entity_type=?, phone=?, email=?, address=?, npwp=? WHERE id=? AND organization_id=?')
+                    ->execute([$name, $type, $entityType, $phone, $email, $address, $npwp, $id, $org['organization_id']]);
                 $flash = ['ok', 'Kontak diperbarui.'];
             } else {
-                $pdo->prepare('INSERT INTO contacts (organization_id, type, name, phone, email, address, npwp) VALUES (?,?,?,?,?,?,?)')
-                    ->execute([$org['organization_id'], $type, $name, $phone, $email, $address, $npwp]);
+                $pdo->prepare('INSERT INTO contacts (organization_id, type, entity_type, name, phone, email, address, npwp) VALUES (?,?,?,?,?,?,?,?)')
+                    ->execute([$org['organization_id'], $type, $entityType, $name, $phone, $email, $address, $npwp]);
                 $flash = ['ok', 'Kontak ditambahkan.'];
             }
         } elseif ($action === 'delete_contact') {
@@ -78,12 +80,13 @@ if (!empty($_GET['edit'])) {
 
 <div class="card">
   <table class="data-table">
-    <thead><tr><th>Nama</th><th>Tipe</th><th>Telp</th><th>Email</th><th></th></tr></thead>
+    <thead><tr><th>Nama</th><th>Tipe</th><th>Entitas</th><th>Telp</th><th>Email</th><th></th></tr></thead>
     <tbody>
       <?php foreach ($contacts as $c): ?>
         <tr>
           <td><?= htmlspecialchars($c['name']) ?></td>
           <td><span class="pill"><?= strtoupper($c['type']) ?></span></td>
+          <td><?= $c['entity_type'] === 'company' ? 'Perusahaan' : 'Individual' ?></td>
           <td><?= htmlspecialchars($c['phone'] ?: '—') ?></td>
           <td><?= htmlspecialchars($c['email'] ?: '—') ?></td>
           <td>
@@ -96,7 +99,7 @@ if (!empty($_GET['edit'])) {
           </td>
         </tr>
       <?php endforeach; ?>
-      <?php if (!$contacts): ?><tr><td colspan="5" style="text-align:center; color:var(--ink-muted);">Belum ada kontak.</td></tr><?php endif; ?>
+      <?php if (!$contacts): ?><tr><td colspan="6" style="text-align:center; color:var(--ink-muted);">Belum ada kontak.</td></tr><?php endif; ?>
     </tbody>
   </table>
 </div>
@@ -113,13 +116,22 @@ if (!empty($_GET['edit'])) {
         <input type="hidden" name="action" value="save_contact">
         <input type="hidden" name="contact_id" id="contact_id" value="<?= $editingContact['id'] ?? '' ?>">
         <div class="field"><label>Nama</label><input type="text" name="name" required value="<?= htmlspecialchars($editingContact['name'] ?? '') ?>"></div>
-        <div class="field">
-          <label>Tipe</label>
-          <select name="type">
-            <option value="customer" <?= ($editingContact['type'] ?? '') === 'customer' ? 'selected' : '' ?>>Customer</option>
-            <option value="vendor" <?= ($editingContact['type'] ?? '') === 'vendor' ? 'selected' : '' ?>>Vendor</option>
-            <option value="both" <?= ($editingContact['type'] ?? '') === 'both' ? 'selected' : '' ?>>Customer &amp; Vendor</option>
-          </select>
+        <div class="field-row">
+          <div class="field">
+            <label>Tipe</label>
+            <select name="type">
+              <option value="customer" <?= ($editingContact['type'] ?? '') === 'customer' ? 'selected' : '' ?>>Customer</option>
+              <option value="vendor" <?= ($editingContact['type'] ?? '') === 'vendor' ? 'selected' : '' ?>>Vendor</option>
+              <option value="both" <?= ($editingContact['type'] ?? '') === 'both' ? 'selected' : '' ?>>Customer &amp; Vendor</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Entitas (buat pajak)</label>
+            <select name="entity_type">
+              <option value="individual" <?= ($editingContact['entity_type'] ?? 'individual') === 'individual' ? 'selected' : '' ?>>Individual</option>
+              <option value="company" <?= ($editingContact['entity_type'] ?? '') === 'company' ? 'selected' : '' ?>>Perusahaan</option>
+            </select>
+          </div>
         </div>
         <div class="field"><label>Telepon</label><input type="text" name="phone" value="<?= htmlspecialchars($editingContact['phone'] ?? '') ?>"></div>
         <div class="field"><label>Email</label><input type="email" name="email" value="<?= htmlspecialchars($editingContact['email'] ?? '') ?>"></div>

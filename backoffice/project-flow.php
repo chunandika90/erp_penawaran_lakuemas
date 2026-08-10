@@ -106,8 +106,9 @@ if ($selected) {
 function flow_parent_refs(string $colKey, array $row): array
 {
     switch ($colKey) {
-        case 'penjualan':
-            return $row['quotation_id'] ? [['penawaran', (int) $row['quotation_id']]] : [];
+        // Penjualan gak lagi nyambung ke Penawaran — Penawaran sekarang penawaran
+        // DARI VENDOR (sisi pengadaan), bukan ke customer, jadi gak ada hubungan
+        // dokumen ke Penjualan (yang ke customer).
         case 'po':
             if (empty($row['source_quotation_ids'])) return [];
             return array_map(fn($id) => ['penawaran', (int) $id], explode(',', $row['source_quotation_ids']));
@@ -125,7 +126,7 @@ function flow_parent_refs(string $colKey, array $row): array
 }
 
 const FLOW_COLUMNS = [
-    ['key' => 'penawaran', 'label' => 'Penawaran', 'href' => 'quotation-gold.php'],
+    ['key' => 'penawaran', 'label' => 'Penawaran (Vendor)', 'href' => 'quotation-gold.php'],
     ['key' => 'po', 'label' => 'Purchase Order', 'href' => 'purchase-order-gold.php'],
     ['key' => 'penerimaan', 'label' => 'Penerimaan Barang', 'href' => 'goods-receipt-gold.php'],
     ['key' => 'transfer', 'label' => 'Transfer Stock', 'href' => 'stock-transfer.php'],

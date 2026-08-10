@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $projects = $pdo->prepare(
     "SELECT p.*, c.name AS contact_name, pic.name AS pic_name, sales.name AS sales_name,
        (SELECT COUNT(*) FROM quotations_gold q WHERE q.project_id=p.id) AS quotation_count,
-       (SELECT COALESCE(SUM(qgl.qty*qgl.unit_price),0) FROM quotation_gold_lines qgl JOIN quotations_gold q ON q.id=qgl.quotation_id WHERE q.project_id=p.id) AS revenue
+       (SELECT COALESCE(SUM(qgl.qty*qgl.unit_price),0) FROM quotation_gold_lines qgl JOIN quotations_gold q ON q.id=qgl.quotation_id WHERE q.project_id=p.id) AS quotation_value
      FROM projects p
      LEFT JOIN contacts c ON c.id=p.contact_id
      LEFT JOIN users pic ON pic.id=p.pic_user_id
@@ -178,9 +178,9 @@ function count_scalar(PDO $pdo, string $sql, int $projectId): int
   </div>
 
   <div class="card">
-    <h3 style="margin-top:0;">Penawaran dalam Project ini</h3>
+    <h3 style="margin-top:0;">Penawaran Vendor dalam Project ini</h3>
     <table class="data-table">
-      <thead><tr><th>No. Dokumen</th><th>Customer</th><th>Total</th><th>Status</th><th>Tanggal</th></tr></thead>
+      <thead><tr><th>No. Dokumen</th><th>Vendor</th><th>Total</th><th>Status</th><th>Tanggal</th></tr></thead>
       <tbody>
         <?php foreach ($detailQuotations as $q): ?>
           <tr>
@@ -206,7 +206,7 @@ function count_scalar(PDO $pdo, string $sql, int $projectId): int
 
   <div class="card">
     <table class="data-table">
-      <thead><tr><th>Nama Project</th><th>Customer</th><th>PIC</th><th>Lead Sales</th><th>Jumlah Penawaran</th><th>Revenue</th></tr></thead>
+      <thead><tr><th>Nama Project</th><th>Customer</th><th>PIC</th><th>Lead Sales</th><th>Jumlah Penawaran (Vendor)</th><th>Nilai Penawaran (Vendor)</th></tr></thead>
       <tbody>
         <?php foreach ($projects as $p): ?>
           <tr>
@@ -215,7 +215,7 @@ function count_scalar(PDO $pdo, string $sql, int $projectId): int
             <td><?= htmlspecialchars($p['pic_name'] ?? '—') ?></td>
             <td><?= htmlspecialchars($p['sales_name'] ?? '—') ?></td>
             <td><?= $p['quotation_count'] ?></td>
-            <td>Rp <?= number_format((float) $p['revenue'], 0, ',', '.') ?></td>
+            <td>Rp <?= number_format((float) $p['quotation_value'], 0, ',', '.') ?></td>
           </tr>
         <?php endforeach; ?>
         <?php if (!$projects): ?><tr><td colspan="6" style="text-align:center; color:var(--ink-muted);">Belum ada project.</td></tr><?php endif; ?>

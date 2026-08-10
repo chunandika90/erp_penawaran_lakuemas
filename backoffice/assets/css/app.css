@@ -136,6 +136,15 @@ table.data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border-
 .txn-totals .row.grand { border-top: 1px solid var(--border); font-weight: 700; font-size: 16px; margin-top: 6px; padding-top: 12px; }
 .txn-totals .row.grand span:first-child { font-weight: 700; color: var(--ink); }
 
+/* Bar pemenuhan (fulfillment) -- dipakai di Penawaran & PO buat nunjukin
+   berapa % qty yang udah kepenuhin (PO-nya udah dibikin / barangnya udah
+   diterima), bukan cuma status teks. */
+.fulfill-wrap { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.fulfill-bar { flex: 1; height: 7px; background: oklch(0.92 0.005 260); border-radius: 20px; overflow: hidden; }
+.fulfill-bar-fill { height: 100%; background: var(--accent); border-radius: 20px; transition: width .3s ease; }
+.fulfill-bar-fill.full { background: var(--green); }
+.fulfill-label { font-size: 11px; color: var(--ink-muted); white-space: nowrap; flex-shrink: 0; }
+
 /* ===== Project Flow board (Trello-style, read-only) ===== */
 .flow-board-wrap { position: relative; margin-top: 18px; }
 .flow-connectors { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; z-index: 0; }
