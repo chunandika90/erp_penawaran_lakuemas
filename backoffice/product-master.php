@@ -116,10 +116,10 @@ foreach ($products as $p) {
     <button type="button" class="btn btn-sm" id="btn-view-drilldown" onclick="setView('drilldown')">Drill-down</button>
     <button type="button" class="btn btn-sm btn-ghost" id="btn-view-kanban" onclick="setView('kanban')">Kanban</button>
     <button type="button" class="btn btn-sm btn-ghost" id="btn-view-table" onclick="setView('table')">Tabel</button>
-    <button type="button" class="pf-orient-toggle" id="pm-orient-toggle" style="margin-left:6px;">⇄ Vertikal</button>
+    <button type="button" class="pf-orient-toggle" id="pm-orient-toggle" style="margin-left:6px; display:none;">⇄ Vertikal</button>
   </div>
   <?php if (has_access('kontak', 'can_create')): ?>
-    <button class="btn btn-sm" type="button" onclick="openProductModal(0)">+ Produk Baru</button>
+    <button class="btn btn-sm" type="button" onclick="openNewProductModal()">+ Produk Baru</button>
   <?php endif; ?>
 </div>
 
@@ -138,7 +138,9 @@ foreach ($products as $p) {
       <div class="flow-col" style="flex:0 0 270px; width:270px;">
         <div class="flow-col-head"><span><?= htmlspecialchars($root['name']) ?></span><span class="flow-count"><?= $totalCount ?></span></div>
         <?php if (!$totalCount): ?><div class="flow-empty">Belum ada produk.</div><?php endif; ?>
-        <?php foreach ($groups as $group): if (!$group['items']) continue; ?>
+        <?php foreach ($groups as $groupKey => $group): if (!$group['items']) continue;
+          $groupCatId = $groupKey === '_other' ? $root['id'] : $groupKey;
+        ?>
           <div class="kanban-subgroup">
             <div class="kanban-subgroup-head"><?= htmlspecialchars($group['label']) ?> <span class="flow-count"><?= count($group['items']) ?></span></div>
             <?php foreach ($group['items'] as $p): ?>
@@ -147,8 +149,14 @@ foreach ($products as $p) {
                 <div class="flow-sub">Rp <?= number_format((float) $p['base_price'], 0, ',', '.') ?> / <?= htmlspecialchars($p['unit']) ?></div>
               </div>
             <?php endforeach; ?>
+            <?php if (has_access('kontak', 'can_create')): ?>
+              <a class="flow-add" href="#" onclick="openProductModal(0, <?= $groupCatId ?>); return false;">+ Tambah di <?= htmlspecialchars($group['label']) ?></a>
+            <?php endif; ?>
           </div>
         <?php endforeach; ?>
+        <?php if (has_access('kontak', 'can_create')): ?>
+          <a class="flow-add" href="#" onclick="openProductModal(0, <?= $root['id'] ?>); return false;">+ Tambah di <?= htmlspecialchars($root['name']) ?></a>
+        <?php endif; ?>
       </div>
     <?php endforeach; ?>
   </div>
@@ -298,8 +306,18 @@ function selectCategoryPath(categoryId) {
   updateCategoryId();
 }
 
+// Tombol "+ Produk Baru" di toolbar atas -- kalau lagi drill-down ke suatu
+// kategori/brand, auto isi kategorinya dari posisi drill-down sekarang.
+function openNewProductModal() {
+  var defaultCat = (typeof drillPath !== 'undefined' && drillPath.length) ? drillPath[drillPath.length - 1] : null;
+  openProductModal(0, defaultCat);
+}
+
 var currentProductId = 0;
-function openProductModal(id) {
+// defaultCategoryId (opsional): dipakai buat "+ Tambah" yang tau konteksnya
+// (lagi drill-down ke kategori tertentu, atau klik "+ Tambah" di sub-grup
+// kanban tertentu) -- kategorinya auto ke-isi, gak perlu cari-cari lagi.
+function openProductModal(id, defaultCategoryId) {
   currentProductId = id;
   var form = document.getElementById('product-form');
   form.reset();
@@ -321,8 +339,12 @@ function openProductModal(id) {
     toggleBtn.textContent = p.is_active ? 'Nonaktifkan' : 'Aktifkan';
   } else {
     document.getElementById('product-modal-title').textContent = 'Produk Baru';
-    refreshCategorySelects();
-    document.getElementById('p_cat_l2_wrap').style.display = 'none';
+    if (defaultCategoryId) {
+      selectCategoryPath(defaultCategoryId);
+    } else {
+      refreshCategorySelects();
+      document.getElementById('p_cat_l2_wrap').style.display = 'none';
+    }
     toggleBtn.style.display = 'none';
   }
   document.getElementById('product-modal').classList.add('open');
@@ -339,6 +361,7 @@ function setView(mode) {
   document.getElementById('btn-view-drilldown').className = 'btn btn-sm' + (mode === 'drilldown' ? '' : ' btn-ghost');
   document.getElementById('btn-view-kanban').className = 'btn btn-sm' + (mode === 'kanban' ? '' : ' btn-ghost');
   document.getElementById('btn-view-table').className = 'btn btn-sm' + (mode === 'table' ? '' : ' btn-ghost');
+  document.getElementById('pm-orient-toggle').style.display = mode === 'kanban' ? '' : 'none';
   if (mode === 'drilldown') renderDrilldown();
 }
 
