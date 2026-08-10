@@ -172,6 +172,24 @@ table.data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border-
 .fulfill-bar-fill.full { background: var(--green); }
 .fulfill-label { font-size: 11px; color: var(--ink-muted); white-space: nowrap; flex-shrink: 0; }
 
+/* ===== Drill-down / pivot view (Master Produk: Group -> Brand -> Pecahan) ===== */
+.drill-breadcrumb { font-size: 13px; font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.drill-breadcrumb a { color: var(--ink-soft); }
+.drill-breadcrumb a:hover { color: var(--accent-text); text-decoration: underline; }
+.drill-breadcrumb a:last-child, .drill-breadcrumb span:last-child { color: var(--ink); }
+.drill-sep { color: var(--ink-faint); font-weight: 400; }
+.drill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.drill-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+  cursor: pointer; box-shadow: var(--shadow-card); transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.drill-card:hover { transform: translateY(-1px); box-shadow: 0 4px 10px oklch(0 0 0 / 0.08); border-color: var(--accent-border-active); }
+.drill-card-title { font-size: 13.5px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+.drill-card-sub { font-size: 12px; color: var(--ink-muted); }
+.drill-card-product .drill-card-title { font-weight: 600; }
+.drill-card-viewall { background: var(--accent-bg); border-color: var(--accent-border-active); border-style: dashed; }
+.drill-card-viewall .drill-card-title, .drill-card-viewall .drill-card-sub { color: var(--accent-text); }
+
 /* ===== Project Flow board (Trello-style, read-only) ===== */
 .flow-board-wrap { position: relative; margin-top: 18px; }
 .flow-connectors { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; z-index: 0; }

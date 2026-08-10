@@ -113,7 +113,8 @@ foreach ($products as $p) {
 
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; gap:10px; flex-wrap:wrap;">
   <div style="display:flex; gap:6px;">
-    <button type="button" class="btn btn-sm" id="btn-view-kanban" onclick="setView('kanban')">Kanban</button>
+    <button type="button" class="btn btn-sm" id="btn-view-drilldown" onclick="setView('drilldown')">Drill-down</button>
+    <button type="button" class="btn btn-sm btn-ghost" id="btn-view-kanban" onclick="setView('kanban')">Kanban</button>
     <button type="button" class="btn btn-sm btn-ghost" id="btn-view-table" onclick="setView('table')">Tabel</button>
     <button type="button" class="pf-orient-toggle" id="pm-orient-toggle" style="margin-left:6px;">⇄ Vertikal</button>
   </div>
@@ -122,7 +123,14 @@ foreach ($products as $p) {
   <?php endif; ?>
 </div>
 
-<div id="view-kanban" class="flow-board-wrap">
+<div id="view-drilldown">
+  <div class="card" style="margin-bottom:14px; padding:12px 16px;">
+    <div id="drill-breadcrumb" class="drill-breadcrumb"></div>
+  </div>
+  <div id="drill-grid" class="drill-grid"></div>
+</div>
+
+<div id="view-kanban" class="flow-board-wrap" style="display:none;">
   <div class="flow-board" id="pm-board" style="overflow-x:auto;">
     <?php foreach ($columns as $col): $root = $col['root']; $groups = $col['groups'];
       $totalCount = array_sum(array_map(fn($g) => count($g['items']), $groups));
@@ -325,10 +333,81 @@ function toggleProductActive() {
 }
 
 function setView(mode) {
+  document.getElementById('view-drilldown').style.display = mode === 'drilldown' ? '' : 'none';
   document.getElementById('view-kanban').style.display = mode === 'kanban' ? '' : 'none';
   document.getElementById('view-table').style.display = mode === 'table' ? '' : 'none';
+  document.getElementById('btn-view-drilldown').className = 'btn btn-sm' + (mode === 'drilldown' ? '' : ' btn-ghost');
   document.getElementById('btn-view-kanban').className = 'btn btn-sm' + (mode === 'kanban' ? '' : ' btn-ghost');
   document.getElementById('btn-view-table').className = 'btn btn-sm' + (mode === 'table' ? '' : ' btn-ghost');
+  if (mode === 'drilldown') renderDrilldown();
+}
+
+// ===== Drill-down (pivot): Group Product -> Brand -> Pecahan, tiap level
+// bisa dipilih "lihat semua" (skip sisa drill) atau lanjut drill 1-1. =====
+var drillPath = [];
+var drillShowAll = false;
+
+function productsUnderCat(catId) {
+  var direct = PRODUCTS.filter(function (p) { return p.category_id === catId; });
+  var children = CAT_CHILDREN[catId] || [];
+  children.forEach(function (c) { direct = direct.concat(productsUnderCat(c.id)); });
+  return direct;
+}
+function countUnderCat(catId) { return productsUnderCat(catId).length; }
+
+function renderProductCards(list) {
+  if (!list.length) return '<div class="flow-empty" style="grid-column:1/-1;">Belum ada produk di sini.</div>';
+  return list.map(function (p) {
+    return '<div class="drill-card drill-card-product" onclick="openProductModal(' + p.id + ')" style="' + (p.is_active ? '' : 'opacity:.55;') + '">' +
+      '<div class="drill-card-title">' + p.name.replace(/</g, '&lt;') + (p.is_active ? '' : ' <span class="pill">Nonaktif</span>') + '</div>' +
+      '<div class="drill-card-sub">Rp ' + Math.round(p.base_price).toLocaleString('id-ID') + ' / ' + p.unit + '</div>' +
+      '</div>';
+  }).join('');
+}
+function renderCatCards(cats, isRoot, currentId) {
+  var html = cats.map(function (c) {
+    var n = countUnderCat(c.id);
+    return '<div class="drill-card" onclick="drillInto(' + c.id + ')">' +
+      '<div class="drill-card-title">' + c.name.replace(/</g, '&lt;') + '</div>' +
+      '<div class="drill-card-sub">' + n + ' produk</div>' +
+      '</div>';
+  }).join('');
+  // Total lewat productsUnderCat(currentId), BUKAN sum children -- kalau
+  // cuma sum children, produk yang nempel LANGSUNG ke currentId (gak punya
+  // Brand, ketampung di grup "Lainnya") ke-skip dari hitungan.
+  var total = currentId ? countUnderCat(currentId) : PRODUCTS.length;
+  html += '<div class="drill-card drill-card-viewall" onclick="drillShowAll = true; renderDrilldown();">' +
+    '<div class="drill-card-title">📋 Lihat Semua</div>' +
+    '<div class="drill-card-sub">' + total + ' produk' + (isRoot ? ' (semua kategori)' : ' di sini') + '</div>' +
+    '</div>';
+  return html;
+}
+
+function drillInto(catId) { drillPath.push(catId); drillShowAll = false; renderDrilldown(); }
+function drillTo(index) { drillPath = index < 0 ? [] : drillPath.slice(0, index + 1); drillShowAll = false; renderDrilldown(); }
+
+function renderDrilldown() {
+  var crumbEl = document.getElementById('drill-breadcrumb');
+  var gridEl = document.getElementById('drill-grid');
+  if (!crumbEl || !gridEl) return;
+
+  var crumbs = ['<a href="#" onclick="drillTo(-1); return false;">Semua Produk</a>'];
+  drillPath.forEach(function (id, i) {
+    var cat = CAT_BY_ID[id];
+    crumbs.push('<a href="#" onclick="drillTo(' + i + '); return false;">' + (cat ? cat.name.replace(/</g, '&lt;') : '?') + '</a>');
+  });
+  if (drillShowAll) crumbs.push('<span>Semua</span>');
+  crumbEl.innerHTML = crumbs.join(' <span class="drill-sep">›</span> ');
+
+  var currentId = drillPath.length ? drillPath[drillPath.length - 1] : null;
+  var children = currentId ? (CAT_CHILDREN[currentId] || []) : (CAT_CHILDREN[0] || []);
+
+  if (drillShowAll || !children.length) {
+    var list = currentId ? productsUnderCat(currentId) : PRODUCTS.slice();
+    gridEl.innerHTML = renderProductCards(list);
+  } else {
+    gridEl.innerHTML = renderCatCards(children, !currentId, currentId);
+  }
 }
 
 (function () {
@@ -347,6 +426,8 @@ function setView(mode) {
     apply();
   });
 })();
+
+renderDrilldown();
 </script>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>
