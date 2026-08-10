@@ -143,6 +143,12 @@ table.data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border-
 .flow-link-dot { fill: var(--accent); opacity: 0; transition: opacity .2s ease; }
 .flow-link-dot.show { opacity: .7; }
 .flow-board { display: flex; gap: 34px; padding-bottom: 8px; align-items: flex-start; position: relative; z-index: 1; }
+.flow-board.vertical { flex-direction: column; align-items: stretch; gap: 20px; }
+.flow-board.vertical .flow-col { width: 100%; }
+
+/* Toggle orientasi board (horizontal/vertikal) di Project Flow. */
+.pf-orient-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-soft); border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 10px; cursor: pointer; background: var(--surface); }
+.pf-orient-toggle:hover { background: var(--accent-bg); color: var(--accent-text); }
 
 /* Toggle buat sembunyiin/tampilin rail project di Project Flow — cuma di halaman ini (#pf-shell). */
 .pf-rail-toggle { flex-shrink: 0; width: 18px; align-self: stretch; border: none; border-right: 1px solid var(--border); background: var(--surface); color: var(--ink-muted); cursor: pointer; font-size: 12px; transition: background .15s ease; }

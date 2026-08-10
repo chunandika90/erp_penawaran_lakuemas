@@ -1,8 +1,13 @@
 <?php
 /**
- * Flow board per project — read-only, model Trello: kolom per tahap dokumen
- * (Penawaran -> Invoice -> PO -> SPK -> Penerimaan -> DO -> Kuitansi), kartu
- * per transaksi. Klik kartu = lompat ke halaman aslinya (bukan UI baru).
+ * Flow board per project (vertikal emas) — model Trello: kolom per tahap
+ * transaksi, kartu per dokumen. Klik kartu = ke halaman modul aslinya
+ * (list+modal, bukan URL per-dokumen — gold pages gak punya route ?id=).
+ * Garis penghubung cuma digambar buat 3 link FK yang beneran ada: Penjualan
+ * -> Penawaran (quotation_id), Penerimaan -> PO (po_id), Retur -> Penerimaan
+ * (goods_receipt_id). PO/Transfer/Lebur berdiri sendiri (gak ada FK dokumen
+ * sumber), sama kayak kolom lama yang parent-nya null — tetep digambar,
+ * cuma tanpa garis.
  */
 $pageTitle = 'Project Flow';
 $activeMenu = 'project_flow';
@@ -11,13 +16,6 @@ require_module_access('penawaran');
 
 $pdo = db();
 $orgId = $org['organization_id'];
-
-function flow_in_clause(array $ids): array
-{
-    if (!$ids) return ['1=0', []];
-    $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    return ["IN ($placeholders)", $ids];
-}
 
 $month = preg_match('/^\d{4}-\d{2}$/', $_GET['month'] ?? '') ? $_GET['month'] : date('Y-m');
 $prevMonth = date('Y-m', strtotime($month . '-01 -1 month'));
@@ -37,151 +35,114 @@ if (!$selected && $selectedId) {
     $selected = $sStmt->fetch() ?: null;
 }
 
-$quotations = $invoices = $purchaseOrders = $spks = $receipts = $deliveryOrders = $kuitansiRows = [];
+$penawaran = $po = $penerimaan = $transfer = $penjualan = $lebur = $retur = [];
 
 if ($selected) {
+    $pid = $selected['id'];
+
     $qStmt = $pdo->prepare(
-        "SELECT q.*, (SELECT COALESCE(SUM(qty*unit_price),0) FROM quotation_lines WHERE quotation_id=q.id) AS subtotal
-         FROM quotations q WHERE q.project_id=? AND q.organization_id=? ORDER BY q.created_at"
+        "SELECT qg.*, (SELECT COALESCE(SUM(qty*unit_price),0) FROM quotation_gold_lines WHERE quotation_id=qg.id) AS total
+         FROM quotations_gold qg WHERE qg.project_id=? AND qg.organization_id=? ORDER BY qg.created_at"
     );
-    $qStmt->execute([$selected['id'], $orgId]);
-    $quotations = $qStmt->fetchAll();
-    foreach ($quotations as &$q) {
-        $disc = $q['discount_type'] === 'percent' ? $q['subtotal'] * ((float) $q['discount_value'] / 100) : (float) $q['discount_value'];
-        $afterDisc = max(0, (float) $q['subtotal'] - $disc);
-        $q['total'] = $afterDisc + ($afterDisc * 0.11);
-    }
-    unset($q);
-    $quotationIds = array_column($quotations, 'id');
+    $qStmt->execute([$pid, $orgId]);
+    $penawaran = $qStmt->fetchAll();
 
-    if ($quotationIds) {
-        [$in, $params] = flow_in_clause($quotationIds);
-        $iStmt = $pdo->prepare("SELECT * FROM invoices WHERE quotation_id $in ORDER BY created_at");
-        $iStmt->execute($params);
-        $invoices = $iStmt->fetchAll();
-    }
-    $invoiceIds = array_column($invoices, 'id');
+    $poStmt = $pdo->prepare(
+        "SELECT po.*, (SELECT COALESCE(SUM(qty*unit_cost),0) FROM purchase_order_gold_lines WHERE po_id=po.id) AS total,
+           (SELECT GROUP_CONCAT(DISTINCT qgl.quotation_id) FROM purchase_order_gold_lines pgl
+              JOIN quotation_gold_lines qgl ON qgl.id = pgl.quotation_line_id WHERE pgl.po_id=po.id) AS source_quotation_ids
+         FROM purchase_orders_gold po WHERE po.project_id=? AND po.organization_id=? ORDER BY po.created_at"
+    );
+    $poStmt->execute([$pid, $orgId]);
+    $po = $poStmt->fetchAll();
 
-    // PO: langsung punya project_id (dari alur Request Material) ATAU nyambung
-    // lewat po_lines->invoice_lines (alur lama jasa_produksi/barang_jadi manual).
-    $poTotalSub = "(SELECT COALESCE(SUM(qty*unit_cost),0) FROM po_lines WHERE po_id=po.id) AS total";
-    $poById = [];
-    $poDirect = $pdo->prepare("SELECT po.*, $poTotalSub FROM purchase_orders po WHERE po.project_id=? AND po.organization_id=?");
-    $poDirect->execute([$selected['id'], $orgId]);
-    foreach ($poDirect->fetchAll() as $po) $poById[$po['id']] = $po;
+    $grStmt = $pdo->prepare(
+        "SELECT gr.*, (SELECT COUNT(*) FROM inventory_items WHERE source_type='goods_receipt' AND source_id=gr.id) AS item_count,
+           (SELECT GROUP_CONCAT(DISTINCT pgl.po_id) FROM inventory_items ii
+              JOIN purchase_order_gold_lines pgl ON pgl.id = ii.po_line_id
+              WHERE ii.source_type='goods_receipt' AND ii.source_id=gr.id) AS source_po_ids
+         FROM gold_goods_receipts gr WHERE gr.project_id=? AND gr.organization_id=? ORDER BY gr.received_at"
+    );
+    $grStmt->execute([$pid, $orgId]);
+    $penerimaan = $grStmt->fetchAll();
 
-    if ($invoiceIds) {
-        [$in, $params] = flow_in_clause($invoiceIds);
-        $poViaInv = $pdo->prepare(
-            "SELECT DISTINCT po.*, $poTotalSub FROM purchase_orders po
-             JOIN po_lines pl ON pl.po_id = po.id
-             JOIN invoice_lines il ON il.id = pl.invoice_line_id
-             WHERE il.invoice_id $in"
-        );
-        $poViaInv->execute($params);
-        foreach ($poViaInv->fetchAll() as $po) $poById[$po['id']] = $po;
+    $trStmt = $pdo->prepare(
+        "SELECT st.*, (SELECT COUNT(*) FROM stock_transfer_lines WHERE stock_transfer_id=st.id) AS item_count
+         FROM stock_transfers st WHERE st.project_id=? AND st.organization_id=? ORDER BY st.sent_at"
+    );
+    $trStmt->execute([$pid, $orgId]);
+    $transfer = $trStmt->fetchAll();
 
-        // PO auto-generate dari Request Material — nyambungnya lewat
-        // material_request_id (bukan project_id-nya sendiri, yang kadang
-        // masih NULL kalau project baru di-assign ke quotation belakangan).
-        [$in, $params] = flow_in_clause($invoiceIds);
-        $poViaMr = $pdo->prepare(
-            "SELECT DISTINCT po.*, $poTotalSub FROM purchase_orders po
-             JOIN material_requests mr ON mr.id = po.material_request_id
-             WHERE mr.invoice_id $in"
-        );
-        $poViaMr->execute($params);
-        foreach ($poViaMr->fetchAll() as $po) $poById[$po['id']] = $po;
-    }
-    $purchaseOrders = array_values($poById);
-    $poIds = array_column($purchaseOrders, 'id');
+    $sgStmt = $pdo->prepare(
+        "SELECT sg.*, (SELECT COALESCE(SUM(unit_price),0) FROM sales_gold_lines WHERE sale_id=sg.id) AS total
+         FROM sales_gold sg WHERE sg.project_id=? AND sg.organization_id=? ORDER BY sg.sold_at"
+    );
+    $sgStmt->execute([$pid, $orgId]);
+    $penjualan = $sgStmt->fetchAll();
 
-    if ($poIds) {
-        [$in, $params] = flow_in_clause($poIds);
-        $sStmt = $pdo->prepare(
-            "SELECT s.*, (SELECT COALESCE(SUM(qty*unit_cost),0) FROM spk_materials WHERE spk_id=s.id) + s.assembly_fee AS total
-             FROM spk s WHERE s.po_id $in ORDER BY s.created_at"
-        );
-        $sStmt->execute($params);
-        $spks = $sStmt->fetchAll();
-    }
-    $spkIds = array_column($spks, 'id');
+    $mlStmt = $pdo->prepare(
+        "SELECT mb.*, (SELECT COUNT(*) FROM melting_batch_lines WHERE melting_batch_id=mb.id) AS item_count
+         FROM melting_batches mb WHERE mb.project_id=? AND mb.organization_id=? ORDER BY mb.melted_at"
+    );
+    $mlStmt->execute([$pid, $orgId]);
+    $lebur = $mlStmt->fetchAll();
 
-    if ($poIds || $spkIds) {
-        $conds = [];
-        $params = [];
-        if ($poIds) { [$in, $p] = flow_in_clause($poIds); $conds[] = "po_id $in"; $params = array_merge($params, $p); }
-        if ($spkIds) { [$in, $p] = flow_in_clause($spkIds); $conds[] = "spk_id $in"; $params = array_merge($params, $p); }
-        $rStmt = $pdo->prepare(
-            'SELECT gr.*, (SELECT COALESCE(SUM(qty*unit_cost),0) FROM goods_receipt_lines WHERE goods_receipt_id=gr.id) AS total
-             FROM goods_receipts gr WHERE (' . implode(' OR ', $conds) . ') ORDER BY gr.received_at'
-        );
-        $rStmt->execute($params);
-        $receipts = $rStmt->fetchAll();
-    }
-
-    if ($invoiceIds) {
-        [$in, $params] = flow_in_clause($invoiceIds);
-        $dStmt = $pdo->prepare(
-            "SELECT do_.*, (SELECT COALESCE(SUM(qty*unit_cost_snapshot),0) FROM delivery_order_lines WHERE delivery_order_id=do_.id) AS total
-             FROM delivery_orders do_ WHERE do_.invoice_id $in ORDER BY do_.created_at"
-        );
-        $dStmt->execute($params);
-        $deliveryOrders = $dStmt->fetchAll();
-
-        [$in, $params] = flow_in_clause($invoiceIds);
-        $kStmt = $pdo->prepare("SELECT * FROM kuitansi WHERE invoice_id $in ORDER BY paid_at");
-        $kStmt->execute($params);
-        $kuitansiRows = $kStmt->fetchAll();
-    }
-
-    // PO -> Invoice, buat garis penghubung (kalau nyambung lewat Request Material
-    // atau lewat po_lines.invoice_line_id — PO yang cuma nyambung lewat project_id
-    // langsung, tanpa salah satu dari itu, gak ke-gambar garisnya).
-    $poInvoiceMap = [];
-    if ($poIds) {
-        [$in, $params] = flow_in_clause($poIds);
-        $viaMr = $pdo->prepare("SELECT po.id po_id, mr.invoice_id FROM purchase_orders po JOIN material_requests mr ON mr.id=po.material_request_id WHERE po.id $in");
-        $viaMr->execute($params);
-        foreach ($viaMr->fetchAll() as $r) $poInvoiceMap[$r['po_id']] = (int) $r['invoice_id'];
-
-        [$in, $params] = flow_in_clause($poIds);
-        $viaLine = $pdo->prepare("SELECT DISTINCT pl.po_id, il.invoice_id FROM po_lines pl JOIN invoice_lines il ON il.id=pl.invoice_line_id WHERE pl.po_id $in");
-        $viaLine->execute($params);
-        foreach ($viaLine->fetchAll() as $r) if (!isset($poInvoiceMap[$r['po_id']])) $poInvoiceMap[$r['po_id']] = (int) $r['invoice_id'];
-    }
+    $rtStmt = $pdo->prepare(
+        "SELECT sr.*, (SELECT COUNT(*) FROM supplier_return_lines WHERE supplier_return_id=sr.id) AS item_count
+         FROM supplier_returns sr JOIN gold_goods_receipts gr ON gr.id=sr.goods_receipt_id
+         WHERE gr.project_id=? AND sr.organization_id=? ORDER BY sr.returned_at"
+    );
+    $rtStmt->execute([$pid, $orgId]);
+    $retur = $rtStmt->fetchAll();
 }
 
-/** [parent_col_key, parent_id] buat gambar garis penghubung ke kartu di kolom sebelumnya. */
-function flow_parent_ref(string $colKey, array $row, array $poInvoiceMap): ?array
+/**
+ * List of [parent_col_key, parent_id] buat gambar garis penghubung ke kartu
+ * di kolom sebelumnya — bisa lebih dari 1 (merge: 1 Penerimaan narik dari
+ * beberapa PO; split: 1 PO bisa nunjuk balik ke Penawaran yang sama kayak PO
+ * lain). Sumbernya dari GROUP_CONCAT baris (source_po_ids/source_quotation_ids),
+ * bukan cuma 1 kolom header kayak dulu.
+ */
+function flow_parent_refs(string $colKey, array $row): array
 {
     switch ($colKey) {
-        case 'invoice': return $row['quotation_id'] ? ['penawaran', (int) $row['quotation_id']] : null;
-        case 'po': return isset($poInvoiceMap[$row['id']]) ? ['invoice', (int) $poInvoiceMap[$row['id']]] : null;
-        case 'spk': return $row['po_id'] ? ['po', (int) $row['po_id']] : null;
+        case 'penjualan':
+            return $row['quotation_id'] ? [['penawaran', (int) $row['quotation_id']]] : [];
+        case 'po':
+            if (empty($row['source_quotation_ids'])) return [];
+            return array_map(fn($id) => ['penawaran', (int) $id], explode(',', $row['source_quotation_ids']));
         case 'penerimaan':
-            if ($row['spk_id']) return ['spk', (int) $row['spk_id']];
-            if ($row['po_id']) return ['po', (int) $row['po_id']];
-            return null;
-        case 'do': return $row['invoice_id'] ? ['invoice', (int) $row['invoice_id']] : null;
-        case 'kuitansi': return $row['invoice_id'] ? ['invoice', (int) $row['invoice_id']] : null;
-        default: return null;
+            if (!empty($row['source_po_ids'])) {
+                return array_map(fn($id) => ['po', (int) $id], explode(',', $row['source_po_ids']));
+            }
+            // Fallback: gak ada baris yang kepilih PO Line-nya, tapi header masih nunjuk 1 PO "info aja".
+            return $row['po_id'] ? [['po', (int) $row['po_id']]] : [];
+        case 'retur':
+            return $row['goods_receipt_id'] ? [['penerimaan', (int) $row['goods_receipt_id']]] : [];
+        default:
+            return [];
     }
 }
 
 const FLOW_COLUMNS = [
-    ['key' => 'penawaran', 'module' => 'penawaran', 'label' => 'Penawaran', 'href' => 'quotations.php'],
-    ['key' => 'invoice', 'module' => 'invoicing', 'label' => 'Invoice', 'href' => 'invoices.php'],
-    ['key' => 'po', 'module' => 'po', 'label' => 'Purchase Order', 'href' => 'purchase-orders.php'],
-    ['key' => 'spk', 'module' => 'spk', 'label' => 'SPK / Manufaktur', 'href' => 'spk.php'],
-    ['key' => 'penerimaan', 'module' => 'penerimaan', 'label' => 'Penerimaan Barang', 'href' => 'goods-receipts.php'],
-    ['key' => 'do', 'module' => 'do', 'label' => 'Delivery Order', 'href' => 'delivery-orders.php'],
-    ['key' => 'kuitansi', 'module' => 'kuitansi', 'label' => 'Kuitansi', 'href' => 'kuitansi.php'],
+    ['key' => 'penawaran', 'label' => 'Penawaran', 'href' => 'quotation-gold.php'],
+    ['key' => 'po', 'label' => 'Purchase Order', 'href' => 'purchase-order-gold.php'],
+    ['key' => 'penerimaan', 'label' => 'Penerimaan Barang', 'href' => 'goods-receipt-gold.php'],
+    ['key' => 'transfer', 'label' => 'Transfer Stock', 'href' => 'stock-transfer.php'],
+    ['key' => 'penjualan', 'label' => 'Penjualan', 'href' => 'sale-gold.php'],
+    ['key' => 'lebur', 'label' => 'Lebur Barang', 'href' => 'melting.php'],
+    ['key' => 'retur', 'label' => 'Retur Supplier', 'href' => 'supplier-return.php'],
 ];
 $flowData = [
-    'penawaran' => $quotations, 'invoice' => $invoices, 'po' => $purchaseOrders,
-    'spk' => $spks, 'penerimaan' => $receipts, 'do' => $deliveryOrders, 'kuitansi' => $kuitansiRows,
+    'penawaran' => $penawaran, 'po' => $po, 'penerimaan' => $penerimaan,
+    'transfer' => $transfer, 'penjualan' => $penjualan, 'lebur' => $lebur, 'retur' => $retur,
 ];
+// Kolom yang punya total Rp lewat baris item vs yang cuma punya jumlah barang
+// (gold_goods_receipts/stock_transfers/melting_batches/supplier_returns gak
+// nyimpen harga per baris — di-tampilin jumlah barang aja, bukan angka Rp
+// yang dikarang).
+$moneyColumns = ['penawaran', 'po', 'penjualan'];
+$statusColumns = ['penawaran', 'po', 'transfer'];
 ?>
 
 <div class="txn-shell" id="pf-shell">
@@ -211,6 +172,7 @@ $flowData = [
       <div class="txn-detail-header">
         <h2><?= htmlspecialchars($selected['name']) ?></h2>
         <div class="txn-detail-actions">
+          <button type="button" class="pf-orient-toggle" id="pf-orient-toggle">⇄ Vertikal</button>
           <a class="btn btn-sm btn-ghost" href="projects.php?id=<?= $selected['id'] ?>">Lihat Detail &amp; P&amp;L</a>
         </div>
       </div>
@@ -218,37 +180,29 @@ $flowData = [
       <div class="flow-board-wrap">
         <svg class="flow-connectors" id="flow-connectors"></svg>
         <div class="flow-board" id="flow-board">
-          <?php foreach (FLOW_COLUMNS as $col): $rows = $flowData[$col['key']];
-            $newHref = $col['href'] . '?new=1' . ($col['key'] === 'penawaran' ? '&picked_project=' . $selected['id'] : '');
-          ?>
+          <?php foreach (FLOW_COLUMNS as $col): $rows = $flowData[$col['key']]; ?>
             <div class="flow-col">
               <div class="flow-col-head"><?= htmlspecialchars($col['label']) ?> <span class="flow-count"><?= count($rows) ?></span></div>
               <?php if (!$rows): ?>
                 <div class="flow-empty">—</div>
               <?php else: foreach ($rows as $row):
-                $parentRef = flow_parent_ref($col['key'], $row, $poInvoiceMap ?? []);
-                $parentAttr = $parentRef ? $parentRef[0] . '-' . $parentRef[1] : '';
+                $parentRefs = flow_parent_refs($col['key'], $row);
+                $parentAttr = implode(',', array_map(fn($r) => $r[0] . '-' . $r[1], $parentRefs));
               ?>
-                <?php
-                  $amount = $col['key'] === 'kuitansi' ? (float) $row['amount'] : (float) ($row['total'] ?? $row['billed_amount'] ?? 0);
-                ?>
-                <a class="flow-card" href="<?= $col['href'] ?>?id=<?= $row['id'] ?>" data-flow-id="<?= $col['key'] ?>-<?= $row['id'] ?>" data-flow-parent="<?= $parentAttr ?>">
+                <a class="flow-card" href="<?= $col['href'] ?>" data-flow-id="<?= $col['key'] ?>-<?= $row['id'] ?>" data-flow-parent="<?= $parentAttr ?>">
                   <div class="flow-doc"><?= htmlspecialchars($row['doc_number']) ?></div>
-                  <?php if ($col['key'] === 'kuitansi'): ?>
-                    <span class="pill pill-<?= $row['payment_type'] ?>"><?= strtoupper($row['payment_type']) ?></span>
-                  <?php elseif ($col['key'] === 'penerimaan'): ?>
-                    <span class="pill"><?= $row['destination'] === 'direct_customer' ? 'KE CUSTOMER' : 'GUDANG' ?></span>
-                  <?php else: ?>
+                  <?php if (in_array($col['key'], $statusColumns, true)): ?>
                     <span class="pill pill-<?= $row['status'] ?>"><?= strtoupper($row['status']) ?></span>
                   <?php endif; ?>
-                  <?php if ($col['key'] === 'invoice'): ?>
-                    <span class="pill" style="margin-left:4px;"><?= $row['payment_scheme'] === 'dp' ? 'DP' : 'LUNAS' ?></span>
+                  <?php if (in_array($col['key'], $moneyColumns, true)): ?>
+                    <div class="flow-sub">Rp <?= number_format((float) $row['total'], 0, ',', '.') ?></div>
+                  <?php else: ?>
+                    <div class="flow-sub"><?= (int) $row['item_count'] ?> barang</div>
                   <?php endif; ?>
-                  <div class="flow-sub">Rp <?= number_format($amount, 0, ',', '.') ?></div>
                 </a>
               <?php endforeach; endif; ?>
-              <?php if (has_access($col['module'], 'can_create')): ?>
-                <a class="flow-add" href="<?= htmlspecialchars($newHref) ?>">+ Tambah</a>
+              <?php if (has_access('kontak', 'can_create')): ?>
+                <a class="flow-add" href="<?= htmlspecialchars($col['href']) ?>">+ Tambah</a>
               <?php endif; ?>
             </div>
           <?php endforeach; ?>
@@ -275,7 +229,24 @@ $flowData = [
 (function () {
   var board = document.getElementById('flow-board');
   var svg = document.getElementById('flow-connectors');
+  var orientToggle = document.getElementById('pf-orient-toggle');
   if (!board || !svg) return;
+
+  var vertical = localStorage.getItem('pf-board-vertical') === '1';
+
+  function applyOrientation() {
+    board.classList.toggle('vertical', vertical);
+    if (orientToggle) orientToggle.textContent = vertical ? '⇄ Horizontal' : '⇄ Vertikal';
+  }
+  applyOrientation();
+  if (orientToggle) {
+    orientToggle.addEventListener('click', function () {
+      vertical = !vertical;
+      localStorage.setItem('pf-board-vertical', vertical ? '1' : '0');
+      applyOrientation();
+      setTimeout(draw, 20);
+    });
+  }
 
   function draw() {
     var boardRect = board.getBoundingClientRect();
@@ -289,18 +260,29 @@ $flowData = [
 
     var paths = [];
     cards.forEach(function (child) {
-      var parentKey = child.getAttribute('data-flow-parent') || '';
-      var parentEl = parentKey ? byId[parentKey] : null;
+      var parentKeys = (child.getAttribute('data-flow-parent') || '').split(',').filter(Boolean);
+      parentKeys.forEach(function (parentKey) {
+      var parentEl = byId[parentKey];
       if (!parentEl) return;
 
       var pr = parentEl.getBoundingClientRect();
       var cr = child.getBoundingClientRect();
-      var x1 = pr.right - boardRect.left;
-      var y1 = pr.top + pr.height / 2 - boardRect.top;
-      var x2 = cr.left - boardRect.left;
-      var y2 = cr.top + cr.height / 2 - boardRect.top;
-      var midX = (x1 + x2) / 2;
-      var d = 'M ' + x1 + ' ' + y1 + ' C ' + midX + ' ' + y1 + ', ' + midX + ' ' + y2 + ', ' + x2 + ' ' + y2;
+      var x1, y1, x2, y2, d;
+      if (vertical) {
+        x1 = pr.left + pr.width / 2 - boardRect.left;
+        y1 = pr.bottom - boardRect.top;
+        x2 = cr.left + cr.width / 2 - boardRect.left;
+        y2 = cr.top - boardRect.top;
+        var midY = (y1 + y2) / 2;
+        d = 'M ' + x1 + ' ' + y1 + ' C ' + x1 + ' ' + midY + ', ' + x2 + ' ' + midY + ', ' + x2 + ' ' + y2;
+      } else {
+        x1 = pr.right - boardRect.left;
+        y1 = pr.top + pr.height / 2 - boardRect.top;
+        x2 = cr.left - boardRect.left;
+        y2 = cr.top + cr.height / 2 - boardRect.top;
+        var midX = (x1 + x2) / 2;
+        d = 'M ' + x1 + ' ' + y1 + ' C ' + midX + ' ' + y1 + ', ' + midX + ' ' + y2 + ', ' + x2 + ' ' + y2;
+      }
 
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
@@ -317,6 +299,7 @@ $flowData = [
         return dot;
       });
       paths.push({ path: path, dots: dots });
+      });
     });
 
     // Animasi "gambar garis" — jalan setelah semua path ke-append ke DOM,

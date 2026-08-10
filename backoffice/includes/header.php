@@ -31,37 +31,6 @@ $org = require_org();
     <div class="org-name"><?= htmlspecialchars($org['legal_name']) ?></div>
     <nav class="app-nav">
       <a href="dashboard.php" class="<?= ($activeMenu ?? '') === 'dashboard' ? 'active' : '' ?>">Dashboard</a>
-      <?php
-      // Modul lama (furniture/wujud-erp) DISEMBUNYIIN dari sidebar — lagi di-remake
-      // buat vertikal emas. File-nya masih ada & tetep bisa diakses lewat URL langsung,
-      // cuma gak muncul di nav biar gak ketuker sama modul emas yang baru.
-      $showLegacyModules = false;
-      if ($showLegacyModules):
-      $moduleLinks = [
-          'penawaran' => 'quotations.php', 'invoicing' => 'invoices.php', 'po' => 'purchase-orders.php',
-          'spk' => 'spk.php', 'penerimaan' => 'goods-receipts.php', 'do' => 'delivery-orders.php',
-          'kuitansi' => 'kuitansi.php', 'kontak' => 'contacts.php', 'laporan' => 'laporan.php',
-      ];
-      foreach (MODULES as $key => $label):
-          if ($key === 'dashboard' || !has_access($key)) continue;
-          $href = $moduleLinks[$key] ?? '#';
-      ?>
-        <a href="<?= htmlspecialchars($href) ?>" class="<?= ($activeMenu ?? '') === $key ? 'active' : '' ?>"><?= htmlspecialchars($label) ?></a>
-        <?php if ($key === 'invoicing' && has_access('po')): ?>
-          <a href="material-requests.php" class="<?= ($activeMenu ?? '') === 'material_requests' ? 'active' : '' ?>">Request Material</a>
-        <?php endif; ?>
-        <?php if ($key === 'laporan'): ?>
-          <a href="inventory-report.php" class="<?= ($activeMenu ?? '') === 'inventory_report' ? 'active' : '' ?>">Laporan Inventory</a>
-        <?php endif; ?>
-      <?php endforeach; ?>
-      <?php if (has_access('kontak')): ?>
-        <a href="products.php" class="<?= ($activeMenu ?? '') === 'products' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Produk &amp; Tier</a>
-        <a href="materials.php" class="<?= ($activeMenu ?? '') === 'materials' ? 'active' : '' ?>">Material</a>
-        <a href="characteristics.php" class="<?= ($activeMenu ?? '') === 'characteristics' ? 'active' : '' ?>">Karakteristik Produk</a>
-        <a href="warehouses.php" class="<?= ($activeMenu ?? '') === 'warehouses' ? 'active' : '' ?>">Gudang</a>
-        <a href="terms.php" class="<?= ($activeMenu ?? '') === 'terms' ? 'active' : '' ?>">Syarat &amp; Ketentuan</a>
-      <?php endif; ?>
-      <?php endif; // showLegacyModules ?>
       <?php if (has_access('kontak')): ?>
         <a href="contacts.php" class="<?= ($activeMenu ?? '') === 'kontak' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Kontak</a>
         <a href="product-master.php" class="<?= ($activeMenu ?? '') === 'product_master' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Master Produk (Emas)</a>
@@ -77,12 +46,11 @@ $org = require_org();
         <a href="melting.php" class="<?= ($activeMenu ?? '') === 'melting' ? 'active' : '' ?>">Lebur Barang</a>
         <a href="supplier-return.php" class="<?= ($activeMenu ?? '') === 'supplier_return' ? 'active' : '' ?>">Retur Supplier</a>
         <a href="stock-report.php" class="<?= ($activeMenu ?? '') === 'stock_report' ? 'active' : '' ?>">Laporan Stock</a>
+        <a href="item-lookup.php" class="<?= ($activeMenu ?? '') === 'item_lookup' ? 'active' : '' ?>">Cek Barang (PLU)</a>
       <?php endif; ?>
       <?php if (has_access('penawaran')): ?>
         <a href="projects.php" class="<?= ($activeMenu ?? '') === 'projects' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Project</a>
-        <?php if ($showLegacyModules): ?>
-          <a href="project-flow.php" class="<?= ($activeMenu ?? '') === 'project_flow' ? 'active' : '' ?>">Project Flow</a>
-        <?php endif; ?>
+        <a href="project-flow.php" class="<?= ($activeMenu ?? '') === 'project_flow' ? 'active' : '' ?>">Project Flow</a>
       <?php endif; ?>
       <a href="users.php" class="<?= ($activeMenu ?? '') === 'users' ? 'active' : '' ?>" style="margin-top:12px; border-top:1px solid #3a362f; padding-top:16px;">Admin User</a>
       <a href="roles.php" class="<?= ($activeMenu ?? '') === 'roles' ? 'active' : '' ?>">Roles &amp; Akses</a>

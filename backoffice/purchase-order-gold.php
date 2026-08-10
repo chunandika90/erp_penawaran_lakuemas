@@ -25,23 +25,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $lineProductIds = $_POST['line_product_id'] ?? [];
             $lineQtys = $_POST['line_qty'] ?? [];
             $lineCosts = $_POST['line_unit_cost'] ?? [];
+            $lineQuotationLineIds = $_POST['line_quotation_line_id'] ?? [];
 
             if (!$vendorId) throw new RuntimeException('Vendor wajib dipilih.');
             $rows = [];
             foreach ($lineProductIds as $i => $pid) {
                 $pid = (int) $pid;
                 if (!$pid) continue;
-                $rows[] = ['product_id' => $pid, 'qty' => (float) ($lineQtys[$i] ?? 1), 'unit_cost' => (float) ($lineCosts[$i] ?? 0)];
+                $rows[] = [
+                    'product_id' => $pid,
+                    'qty' => (float) ($lineQtys[$i] ?? 1),
+                    'unit_cost' => (float) ($lineCosts[$i] ?? 0),
+                    'quotation_line_id' => (int) ($lineQuotationLineIds[$i] ?? 0) ?: null,
+                ];
             }
             if (!$rows) throw new RuntimeException('Minimal 1 baris produk harus diisi.');
+
+            $qlCheck = $pdo->prepare(
+                'SELECT qgl.id FROM quotation_gold_lines qgl JOIN quotations_gold qg ON qg.id = qgl.quotation_id
+                 WHERE qgl.id=? AND qg.organization_id=?'
+            );
 
             $pdo->beginTransaction();
             $docNumber = next_doc_number($org['organization_id'], 'PO-EMAS');
             $pdo->prepare('INSERT INTO purchase_orders_gold (organization_id, doc_number, vendor_id, project_id, notes, created_by) VALUES (?,?,?,?,?,?)')
                 ->execute([$org['organization_id'], $docNumber, $vendorId, $projectId, $notes, $user['id']]);
             $poId = (int) $pdo->lastInsertId();
-            $insLine = $pdo->prepare('INSERT INTO purchase_order_gold_lines (po_id, product_id, qty, unit_cost) VALUES (?,?,?,?)');
-            foreach ($rows as $r) $insLine->execute([$poId, $r['product_id'], $r['qty'], $r['unit_cost']]);
+            $insLine = $pdo->prepare('INSERT INTO purchase_order_gold_lines (po_id, product_id, quotation_line_id, qty, unit_cost) VALUES (?,?,?,?,?)');
+            foreach ($rows as $r) {
+                if ($r['quotation_line_id']) {
+                    $qlCheck->execute([$r['quotation_line_id'], $org['organization_id']]);
+                    if (!$qlCheck->fetch()) throw new RuntimeException('Ada baris Penawaran sumber yang tidak valid.');
+                }
+                $insLine->execute([$poId, $r['product_id'], $r['quotation_line_id'], $r['qty'], $r['unit_cost']]);
+            }
             $pdo->commit();
             $flash = ['ok', "PO $docNumber tersimpan."];
         } elseif ($action === 'set_status') {
@@ -69,6 +86,18 @@ $projects = $projects->fetchAll();
 $products = $pdo->prepare("SELECT p.id, p.name, cat.name AS category_name FROM products p LEFT JOIN product_categories cat ON cat.id = p.category_id WHERE p.organization_id=? AND p.is_active=1 AND p.category_id IS NOT NULL ORDER BY p.name");
 $products->execute([$org['organization_id']]);
 $products = $products->fetchAll();
+
+// Baris Penawaran yang udah "approved" — sumber opsional buat baris PO
+// (1 baris Penawaran boleh dirujuk banyak baris PO/lintas PO = split).
+$openQuotationLines = $pdo->prepare(
+    "SELECT qgl.id, qgl.product_id, qgl.qty, qg.doc_number, qg.project_id, c.name AS contact_name
+     FROM quotation_gold_lines qgl
+     JOIN quotations_gold qg ON qg.id = qgl.quotation_id
+     JOIN contacts c ON c.id = qg.contact_id
+     WHERE qg.organization_id=? AND qg.status='approved' ORDER BY qg.id DESC"
+);
+$openQuotationLines->execute([$org['organization_id']]);
+$openQuotationLines = $openQuotationLines->fetchAll();
 
 $pos = $pdo->prepare(
     "SELECT po.*, v.name AS vendor_name,
@@ -114,8 +143,9 @@ $pos = $pos->fetchAll();
     </div>
     <div class="field"><label>Catatan (opsional)</label><textarea name="notes" rows="2"></textarea></div>
 
+    <p style="font-size:12px; color:var(--ink-muted); margin:0 0 8px;">Tiap baris bisa (opsional) dirujukin ke baris Penawaran sumbernya — 1 Penawaran boleh dipecah ke beberapa baris PO/PO berbeda.</p>
     <table class="data-table" style="margin-bottom:10px;">
-      <thead><tr><th style="width:36%;">Produk</th><th style="width:110px;">Qty</th><th style="width:160px;">Harga Beli/Satuan</th><th></th></tr></thead>
+      <thead><tr><th style="width:24%;">Dari Penawaran (opsional)</th><th style="width:24%;">Produk</th><th style="width:100px;">Qty</th><th style="width:140px;">Harga Beli/Satuan</th><th></th></tr></thead>
       <tbody id="po-lines-body"></tbody>
     </table>
     <button type="button" class="btn btn-sm btn-ghost" onclick="addPoLine()">+ Tambah Produk</button>
@@ -156,15 +186,23 @@ $pos = $pos->fetchAll();
 
 <script>
 var PO_PRODUCTS = <?= json_encode(array_map(fn($p) => ['id' => (int) $p['id'], 'label' => $p['name'] . ($p['category_name'] ? ' (' . $p['category_name'] . ')' : '')], $products)) ?>;
+var PO_QUOTATION_LINES = <?= json_encode(array_map(fn($l) => ['id' => (int) $l['id'], 'product_id' => (int) $l['product_id'], 'label' => $l['doc_number'] . ' — ' . $l['contact_name'] . ' (' . $l['qty'] . 'x)'], $openQuotationLines)) ?>;
 function addPoLine() {
   var tr = document.createElement('tr');
+  var qlOpts = '<option value="">— tanpa Penawaran —</option>' + PO_QUOTATION_LINES.map(function (l) { return '<option value="' + l.id + '" data-product-id="' + l.product_id + '">' + l.label.replace(/</g, '&lt;') + '</option>'; }).join('');
   var opts = '<option value="">— pilih —</option>' + PO_PRODUCTS.map(function (p) { return '<option value="' + p.id + '">' + p.label.replace(/</g, '&lt;') + '</option>'; }).join('');
   tr.innerHTML =
+    '<td><select name="line_quotation_line_id[]" onchange="poQuotationLineChanged(this)">' + qlOpts + '</select></td>' +
     '<td><select name="line_product_id[]" required>' + opts + '</select></td>' +
     '<td><input type="text" name="line_qty[]" value="1" inputmode="decimal"></td>' +
     '<td><input type="text" name="line_unit_cost[]" inputmode="decimal" value="0"></td>' +
     '<td><button type="button" class="btn btn-sm btn-ghost" onclick="this.closest(\'tr\').remove()">Hapus</button></td>';
   document.getElementById('po-lines-body').appendChild(tr);
+}
+function poQuotationLineChanged(sel) {
+  var productId = sel.selectedOptions[0] ? sel.selectedOptions[0].getAttribute('data-product-id') : '';
+  var prodSelect = sel.closest('tr').querySelector('select[name="line_product_id[]"]');
+  if (productId) prodSelect.value = productId;
 }
 addPoLine();
 </script>

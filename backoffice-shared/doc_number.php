@@ -6,7 +6,8 @@
  */
 require_once __DIR__ . '/db.php';
 
-function next_doc_number(int $organizationId, string $docType): string
+/** Increment (atau bikin baru) counter tahunan per organisasi+doc_type, return angka urutnya. */
+function next_counter(int $organizationId, string $docType): int
 {
     $pdo = db();
     $year = (int) date('Y');
@@ -36,10 +37,32 @@ function next_doc_number(int $organizationId, string $docType): string
         throw $e;
     }
 
+    return $next;
+}
+
+function next_doc_number(int $organizationId, string $docType): string
+{
+    $next = next_counter($organizationId, $docType);
+    $year = (int) date('Y');
+
+    $pdo = db();
     $org = $pdo->prepare('SELECT document_prefix, legal_name FROM organizations WHERE id=?');
     $org->execute([$organizationId]);
     $org = $org->fetch();
     $prefix = $org['document_prefix'] ?: strtoupper(substr(preg_replace('/[^A-Za-z]/', '', $org['legal_name'] ?? 'ORG'), 0, 4));
 
     return sprintf('%s/%s/%d/%04d', $prefix, strtoupper($docType), $year, $next);
+}
+
+/**
+ * Kode PLU barang fisik — cuma tahun + running number, TANPA prefix/kata
+ * (beda dari next_doc_number yang dokumen biasa), soalnya ini yang di-encode
+ * jadi barcode & ditempel fisik ke barang — makin pendek/bersih makin gampang
+ * discan & ditulis manual kalau labelnya rusak.
+ */
+function next_plu_code(int $organizationId): string
+{
+    $next = next_counter($organizationId, 'PLU_CODE');
+    $year = (int) date('Y');
+    return sprintf('%d-%06d', $year, $next);
 }

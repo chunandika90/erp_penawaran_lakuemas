@@ -1,17 +1,12 @@
 <?php
 /**
- * Daftar 10 modul per DOKUMENTASI_ARSITEKTUR.md bagian 3 — dipakai buat
- * matrix hak akses (role_module_access) & menu sidebar.
+ * Daftar modul dipakai buat matrix hak akses (role_module_access) & menu
+ * sidebar. Modul furniture lama (Invoicing/PO/SPK/Penerimaan/DO/Kuitansi/
+ * Laporan) udah di-retire bareng tabelnya — vertikal emas cuma gerbang lewat
+ * 'kontak', dan 'penawaran' sekarang gerbang Project + Project Flow.
  */
 const MODULES = [
     'dashboard' => 'Dashboard',
-    'penawaran' => 'Penawaran',
-    'invoicing' => 'Invoicing',
-    'po' => 'Purchase Order',
-    'spk' => 'SPK Produksi',
-    'penerimaan' => 'Penerimaan Barang',
-    'do' => 'Delivery Order',
-    'kuitansi' => 'Kuitansi',
+    'penawaran' => 'Project & Transaksi',
     'kontak' => 'Kontak',
-    'laporan' => 'Laporan',
 ];

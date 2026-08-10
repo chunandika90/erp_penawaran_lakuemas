@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         if (!$prodCheck->fetch()) throw new RuntimeException('Produk hasil lebur tidak valid.');
 
         $docNumber = next_doc_number($org['organization_id'], 'LEBUR');
-        $outputPlu = next_doc_number($org['organization_id'], 'PLU');
+        $outputPlu = next_plu_code($org['organization_id']);
         $pdo->prepare('INSERT INTO inventory_items (organization_id, product_id, location_id, stock_type_id, certificate_code, plu_code, weight, project_id, source_type) VALUES (?,?,?,?,?,?,?,?,\'melting_output\')')
             ->execute([$org['organization_id'], $outputProductId, $locationId, $outputStockTypeId, $outputCert, $outputPlu, $outputWeight, $projectId]);
         $outputItemId = (int) $pdo->lastInsertId();

@@ -51,9 +51,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($action === 'delete_project') {
             require_module_access('penawaran', 'can_delete');
             $id = (int) ($_POST['proj_id'] ?? 0);
-            $pdo->prepare('UPDATE quotations SET project_id=NULL WHERE project_id=? AND organization_id=?')->execute([$id, $org['organization_id']]);
+            $linked = $pdo->prepare(
+                'SELECT
+                   (SELECT COUNT(*) FROM quotations_gold WHERE project_id=?) +
+                   (SELECT COUNT(*) FROM purchase_orders_gold WHERE project_id=?) +
+                   (SELECT COUNT(*) FROM gold_goods_receipts WHERE project_id=?) +
+                   (SELECT COUNT(*) FROM sales_gold WHERE project_id=?) +
+                   (SELECT COUNT(*) FROM melting_batches WHERE project_id=?) +
+                   (SELECT COUNT(*) FROM stock_transfers WHERE project_id=?) +
+                   (SELECT COUNT(*) FROM inventory_items WHERE project_id=?) AS cnt'
+            );
+            $linked->execute([$id, $id, $id, $id, $id, $id, $id]);
+            if ((int) $linked->fetch()['cnt'] > 0) {
+                throw new RuntimeException('Project masih punya dokumen/stock terkait (Penawaran, PO, Penerimaan, Penjualan, Lebur, Transfer, atau barang inventory). Lepas/hapus dulu sebelum menghapus project ini.');
+            }
             $pdo->prepare('DELETE FROM projects WHERE id=? AND organization_id=?')->execute([$id, $org['organization_id']]);
-            $flash = ['ok', 'Project dihapus (Penawaran yang terkait jadi tidak ter-grup lagi).'];
+            $flash = ['ok', 'Project dihapus.'];
         }
     } catch (Throwable $e) {
         $flash = ['error', $e->getMessage()];
@@ -62,8 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $projects = $pdo->prepare(
     "SELECT p.*, c.name AS contact_name, pic.name AS pic_name, sales.name AS sales_name,
-       (SELECT COUNT(*) FROM quotations q WHERE q.project_id=p.id) AS quotation_count,
-       (SELECT COALESCE(SUM(il.qty*il.unit_price),0) FROM invoice_lines il JOIN quotation_lines ql ON ql.id=il.quotation_line_id JOIN quotations q ON q.id=ql.quotation_id WHERE q.project_id=p.id) AS revenue
+       (SELECT COUNT(*) FROM quotations_gold q WHERE q.project_id=p.id) AS quotation_count,
+       (SELECT COALESCE(SUM(qgl.qty*qgl.unit_price),0) FROM quotation_gold_lines qgl JOIN quotations_gold q ON q.id=qgl.quotation_id WHERE q.project_id=p.id) AS revenue
      FROM projects p
      LEFT JOIN contacts c ON c.id=p.contact_id
      LEFT JOIN users pic ON pic.id=p.pic_user_id
@@ -98,45 +111,32 @@ if (!empty($_GET['id'])) {
 
     if ($detail) {
         $qStmt = $pdo->prepare(
-            'SELECT q.*, c.name AS contact_name, (SELECT COALESCE(SUM(qty*unit_price),0) FROM quotation_lines WHERE quotation_id=q.id) AS total
-             FROM quotations q JOIN contacts c ON c.id=q.contact_id
+            'SELECT q.*, c.name AS contact_name, (SELECT COALESCE(SUM(qty*unit_price),0) FROM quotation_gold_lines WHERE quotation_id=q.id) AS total
+             FROM quotations_gold q JOIN contacts c ON c.id=q.contact_id
              WHERE q.project_id=? ORDER BY q.created_at'
         );
         $qStmt->execute([$detail['id']]);
         $detailQuotations = $qStmt->fetchAll();
 
         $revStmt = $pdo->prepare(
-            'SELECT COALESCE(SUM(il.qty*il.unit_price),0) c FROM invoice_lines il
-             JOIN quotation_lines ql ON ql.id=il.quotation_line_id JOIN quotations q ON q.id=ql.quotation_id
-             WHERE q.project_id=?'
+            'SELECT COALESCE(SUM(sgl.unit_price),0) c FROM sales_gold_lines sgl
+             JOIN sales_gold sg ON sg.id=sgl.sale_id WHERE sg.project_id=?'
         );
         $revStmt->execute([$detail['id']]);
         $revenue = (float) $revStmt->fetch()['c'];
 
-        $cogsStmt = $pdo->prepare(
-            'SELECT COALESCE(SUM(dol.qty*dol.unit_cost_snapshot),0) c FROM delivery_order_lines dol
-             JOIN invoice_lines il ON il.id=dol.invoice_line_id
-             JOIN quotation_lines ql ON ql.id=il.quotation_line_id JOIN quotations q ON q.id=ql.quotation_id
-             WHERE q.project_id=?'
-        );
-        $cogsStmt->execute([$detail['id']]);
-        $cogs = (float) $cogsStmt->fetch()['c'];
+        $poCount = (int) count_scalar($pdo, 'SELECT COUNT(*) FROM purchase_orders_gold WHERE project_id=?', $detail['id']);
+        $saleCount = (int) count_scalar($pdo, 'SELECT COUNT(*) FROM sales_gold WHERE project_id=?', $detail['id']);
 
-        // JOIN langsung invoices -> quotations (bukan lewat invoice_lines) — invoice
-        // ke-2+ dari 1 Penawaran yang sama (DP/termin susulan) sengaja gak punya
-        // invoice_lines lagi, jadi kalau lewat invoice_lines kuitansi-nya ke-skip.
-        $paidStmt = $pdo->prepare(
-            'SELECT COALESCE(SUM(k.amount),0) c FROM kuitansi k
-             WHERE k.invoice_id IN (
-               SELECT i.id FROM invoices i JOIN quotations q ON q.id=i.quotation_id
-               WHERE q.project_id=?
-             )'
-        );
-        $paidStmt->execute([$detail['id']]);
-        $paid = (float) $paidStmt->fetch()['c'];
-
-        $detailStats = ['revenue' => $revenue, 'cogs' => $cogs, 'profit' => $revenue - $cogs, 'paid' => $paid];
+        $detailStats = ['revenue' => $revenue, 'quotation_count' => count($detailQuotations), 'po_count' => $poCount, 'sale_count' => $saleCount];
     }
+}
+
+function count_scalar(PDO $pdo, string $sql, int $projectId): int
+{
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$projectId]);
+    return (int) $stmt->fetchColumn();
 }
 ?>
 
@@ -171,10 +171,10 @@ if (!empty($_GET['id'])) {
   </div>
 
   <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px;">
-    <div class="card"><div style="font-size:20px; font-weight:700;">Rp <?= number_format($detailStats['revenue'], 0, ',', '.') ?></div><div style="font-size:12px; color:var(--ink-muted);">Revenue (invoice)</div></div>
-    <div class="card"><div style="font-size:20px; font-weight:700;">Rp <?= number_format($detailStats['cogs'], 0, ',', '.') ?></div><div style="font-size:12px; color:var(--ink-muted);">HPP (terkirim)</div></div>
-    <div class="card"><div style="font-size:20px; font-weight:700;">Rp <?= number_format($detailStats['profit'], 0, ',', '.') ?></div><div style="font-size:12px; color:var(--ink-muted);">Gross Profit</div></div>
-    <div class="card"><div style="font-size:20px; font-weight:700;">Rp <?= number_format($detailStats['paid'], 0, ',', '.') ?></div><div style="font-size:12px; color:var(--ink-muted);">Sudah Diterima (Kuitansi)</div></div>
+    <div class="card"><div style="font-size:20px; font-weight:700;">Rp <?= number_format($detailStats['revenue'], 0, ',', '.') ?></div><div style="font-size:12px; color:var(--ink-muted);">Revenue (Penjualan)</div></div>
+    <div class="card"><div style="font-size:20px; font-weight:700;"><?= $detailStats['quotation_count'] ?></div><div style="font-size:12px; color:var(--ink-muted);">Jumlah Penawaran</div></div>
+    <div class="card"><div style="font-size:20px; font-weight:700;"><?= $detailStats['po_count'] ?></div><div style="font-size:12px; color:var(--ink-muted);">Jumlah PO</div></div>
+    <div class="card"><div style="font-size:20px; font-weight:700;"><?= $detailStats['sale_count'] ?></div><div style="font-size:12px; color:var(--ink-muted);">Jumlah Penjualan</div></div>
   </div>
 
   <div class="card">
@@ -184,14 +184,14 @@ if (!empty($_GET['id'])) {
       <tbody>
         <?php foreach ($detailQuotations as $q): ?>
           <tr>
-            <td><a href="quotation-print.php?id=<?= $q['id'] ?>" target="_blank"><?= htmlspecialchars($q['doc_number']) ?></a></td>
+            <td><a href="quotation-gold.php"><?= htmlspecialchars($q['doc_number']) ?></a></td>
             <td><?= htmlspecialchars($q['contact_name']) ?></td>
             <td>Rp <?= number_format((float) $q['total'], 0, ',', '.') ?></td>
             <td><span class="pill"><?= strtoupper($q['status']) ?></span></td>
             <td class="num"><?= htmlspecialchars(date('d M Y', strtotime($q['created_at']))) ?></td>
           </tr>
         <?php endforeach; ?>
-        <?php if (!$detailQuotations): ?><tr><td colspan="5" style="text-align:center; color:var(--ink-muted);">Belum ada Penawaran di project ini. Tambahkan lewat halaman <a href="quotations.php">Penawaran</a>.</td></tr><?php endif; ?>
+        <?php if (!$detailQuotations): ?><tr><td colspan="5" style="text-align:center; color:var(--ink-muted);">Belum ada Penawaran di project ini. Tambahkan lewat halaman <a href="quotation-gold.php">Penawaran</a>.</td></tr><?php endif; ?>
       </tbody>
     </table>
   </div>
