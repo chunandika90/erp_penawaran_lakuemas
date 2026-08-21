@@ -7,3 +7,7 @@ backoffice-shared/config.local.php
 
 # Salinan starter buat project lain (Sekolah Harmoni) — bukan bagian repo ini.
 /erp_harmony/
+
+# Backup DB lokal buat pindah laptop — data personal/dev, bukan source of truth
+# (source of truth schema ada di sql/, ini cuma snapshot data sekali pindah).
+/local-db-snapshot.sql
